@@ -31,16 +31,21 @@ for volume in "$state" "$sources" "$backups"; do
   "$engine" volume create "$volume" >/dev/null
 done
 
-"$engine" run -d \
+set -- run -d \
   --name "$container" \
   --network host \
   --read-only \
   --cap-drop=ALL \
-  --security-opt=no-new-privileges \
+  --security-opt=no-new-privileges
+if [ "$engine" = "podman" ]; then
+  set -- "$@" --read-only-tmpfs=false
+fi
+set -- "$@" \
   --volume "$state:/var/lib/vpsmith/state" \
   --volume "$sources:/var/lib/vpsmith/sources" \
   --volume "$backups:/var/lib/vpsmith/backups" \
-  "$image" >/dev/null
+  "$image"
+"$engine" "$@" >/dev/null
 
 healthy=0
 i=0
@@ -85,7 +90,7 @@ done
   done
 '
 if "$engine" exec "$container" /bin/sh -c ': > /tmp/vpsmith-rootfs-write-test' >/dev/null 2>&1; then
-  printf 'ERROR: read-only root filesystem accepted a write\n' >&2
+  printf 'ERROR: read-only root filesystem accepted a write outside persistent mounts\n' >&2
   exit 1
 fi
 

@@ -58,6 +58,7 @@ if [ "$engine" = "docker" ]; then
 else
   set -- build \
     --file Containerfile \
+    --format docker \
     --build-arg "VERSION=$version" \
     --build-arg "REVISION=$revision" \
     --source-date-epoch "$source_date_epoch" \

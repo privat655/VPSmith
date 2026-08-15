@@ -13,13 +13,19 @@ for volume in vpsmith-state vpsmith-sources vpsmith-backups; do
   "$engine" volume inspect "$volume" >/dev/null 2>&1 || "$engine" volume create "$volume" >/dev/null
 done
 
-exec "$engine" run --rm \
+set -- run --rm \
   --name vpsmith-platform \
   --network host \
   --read-only \
   --cap-drop=ALL \
-  --security-opt=no-new-privileges \
+  --security-opt=no-new-privileges
+if [ "$engine" = "podman" ]; then
+  set -- "$@" --read-only-tmpfs=false
+fi
+set -- "$@" \
   --volume vpsmith-state:/var/lib/vpsmith/state \
   --volume vpsmith-sources:/var/lib/vpsmith/sources \
   --volume vpsmith-backups:/var/lib/vpsmith/backups \
   "$image"
+
+exec "$engine" "$@"

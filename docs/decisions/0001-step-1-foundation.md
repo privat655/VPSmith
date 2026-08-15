@@ -45,6 +45,8 @@ The process address is a compile-time constant: `127.0.0.1:8787`. It is not conf
 
 On Linux the container uses `--network host`. This is intentionally narrower than the common bridge-plus-port-publish pattern: bridge publishing would normally require the process inside the container to listen on a non-loopback address, contradicting the explicit VPSmith step-1 contract. The reduced network isolation is countered by the tiny local-only process, non-root UID, read-only root filesystem, dropped capabilities, `no-new-privileges`, no engine socket mount, and exactly three writable persistent volumes.
 
+Podman normally makes `/tmp`, `/run`, and `/var/tmp` writable tmpfs even when `--read-only` is set. VPSmith disables that Podman default with `--read-only-tmpfs=false` so the only writable runtime locations remain the three declared persistent volumes.
+
 ### Persistent mounts
 
 The stable host/container contract is:
@@ -59,7 +61,7 @@ The corresponding default named volumes are `vpsmith-state`, `vpsmith-sources`, 
 
 The build is a multi-stage OCI build. Builder and runtime base images are pinned to explicit upstream digests. The runtime process is UID/GID `10001:10001`. The repository reserves `ghcr.io/privat655/vpsmith-platform` as the image name; step 1 does not publish releases or add registry credentials.
 
-The build receives version, Git revision, and `SOURCE_DATE_EPOCH` explicitly. Go builds use `-trimpath` and `-buildvcs=false`. Docker uses a named `docker-container` Buildx builder pinned to BuildKit 0.30.0 plus the Docker exporter with `SOURCE_DATE_EPOCH`, a fixed `linux/amd64` platform, disabled attestations, and `rewrite-timestamp=true` so filesystem timestamps are normalized as well. Podman uses its native `--source-date-epoch` and `--rewrite-timestamp` build options, which also supply `SOURCE_DATE_EPOCH` to the declared build stage. CI checks reproducible image IDs independently for both engines.
+The build receives version, Git revision, and `SOURCE_DATE_EPOCH` explicitly. Go builds use `-trimpath` and `-buildvcs=false`. Docker uses a named `docker-container` Buildx builder pinned to BuildKit 0.30.0 plus the Docker exporter with `SOURCE_DATE_EPOCH`, a fixed `linux/amd64` platform, disabled attestations, and `rewrite-timestamp=true` so filesystem timestamps are normalized as well. Podman uses its native `--source-date-epoch` and `--rewrite-timestamp` build options, and builds Docker image format so the declared `HEALTHCHECK` is preserved. CI checks reproducible image IDs independently for both engines.
 
 ### Supported platforms
 
