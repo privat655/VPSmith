@@ -32,12 +32,13 @@ RUN mkdir -p \
       /var/lib/vpsmith/sources \
       /var/lib/vpsmith/backups \
       /usr/share/vpsmith/embedded \
-    && chown -R 10001:10001 /var/lib/vpsmith /usr/share/vpsmith
+    && chown -R 10001:10001 /var/lib/vpsmith
 
 COPY --from=build --chown=10001:10001 /out/vpsmith-studio /usr/local/bin/vpsmith-studio
-COPY --chown=10001:10001 embedded/ /usr/share/vpsmith/embedded/
+COPY --chown=0:0 embedded/ /usr/share/vpsmith/embedded/
 
-RUN /usr/local/bin/vpsmith-studio version >/dev/null
+RUN chmod -R a-w /usr/share/vpsmith/embedded \
+    && /usr/local/bin/vpsmith-studio version >/dev/null
 
 LABEL org.opencontainers.image.title="VPSmith Platform" \
       org.opencontainers.image.version="$VERSION" \

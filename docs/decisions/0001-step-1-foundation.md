@@ -35,7 +35,9 @@ Later deep VPSmith Platform modules are added under `internal` only when their r
 
 ### Embedded-source identity
 
-`embedded/manifest.json` is canonical build metadata for the image input. Each embedded source tree has an explicit version and SHA-256. The SHA-256 is a canonical tree digest over sorted POSIX paths. Regular files contribute path, Unix permission bits, byte size, and content digest; symlinks contribute path and target and are not followed. Source roots may not escape `embedded/` through symlinks. Unsupported filesystem entry types fail closed.
+`embedded/manifest.json` is canonical build metadata for the image input. Each embedded source tree has an explicit version and SHA-256. The SHA-256 is a canonical tree digest over sorted POSIX paths. Regular files contribute path, Unix permission bits, byte size, and content digest; symlinks contribute path and target and are not followed for hashing. A source root may not escape `embedded/` through a symlink. Inner symlinks must use relative targets and must resolve to an existing entry inside the same source tree; dangling, absolute, or escaping targets fail closed. Unsupported filesystem entry types also fail closed.
+
+The embedded directory is release input, not mutable runtime state. It is copied into the runtime image as `root:root` and has all write bits removed. The non-root Studio process can read these basis snapshots but cannot alter them, even when the image is started without the normal read-only-rootfs flag.
 
 The step-1 source trees are marked `0.1.0-scaffold.1` and are deliberately non-deployable. Historical scripts remain evidence; they are not copied into the new tree as an accidental second architecture.
 
@@ -43,7 +45,9 @@ The step-1 source trees are marked `0.1.0-scaffold.1` and are deliberately non-d
 
 The process address is a compile-time constant: `127.0.0.1:8787`. It is not configurable by environment variable or command-line flag. Startup validates that the actual listener is loopback and fails closed otherwise.
 
-On Linux the container uses `--network host`. This is intentionally narrower than the common bridge-plus-port-publish pattern: bridge publishing would normally require the process inside the container to listen on a non-loopback address, contradicting the explicit VPSmith step-1 contract. The reduced network isolation is countered by the tiny local-only process, non-root UID, read-only root filesystem, dropped capabilities, `no-new-privileges`, no engine socket mount, and exactly three writable persistent volumes.
+The Version 1 administrative workstation support envelope is deliberately **Linux on amd64**. The container uses Linux host networking (`--network host`) so the process itself can bind to loopback without exposing a wildcard container listener. Windows and macOS administrative workstations are not supported in Version 1. Expanding workstation support later requires an explicit replacement or extension of this start/network contract rather than silently weakening the loopback invariant.
+
+The reduced network isolation of host networking is countered by the tiny local-only process, non-root UID, read-only root filesystem, dropped capabilities, `no-new-privileges`, no engine socket mount, and exactly three writable persistent volumes.
 
 Podman normally makes `/tmp`, `/run`, and `/var/tmp` writable tmpfs even when `--read-only` is set. VPSmith disables that Podman default with `--read-only-tmpfs=false` so the only writable runtime locations remain the three declared persistent volumes.
 
@@ -65,7 +69,7 @@ The build receives version, Git revision, and `SOURCE_DATE_EPOCH` explicitly. Go
 
 ### Supported platforms
 
-Step 1 verifies the administrative container contract on Linux using GitHub Actions `ubuntu-24.04`. Docker and Podman are the supported engines for this foundation.
+Version 1 supports the administrative container on **Linux/amd64** with Docker or Podman. Step 1 verifies that contract on GitHub Actions `ubuntu-24.04`. Other administrative-workstation operating systems and architectures are outside the Version 1 support envelope.
 
 For later Ziel-VPS live integration, the initial target baseline is Ubuntu Server 24.04 LTS on amd64. This is only a future integration baseline; step 1 contains no Ziel-VPS operations.
 

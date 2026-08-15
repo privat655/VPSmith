@@ -113,6 +113,57 @@ func TestLoadRejectsEmbeddedSourceRootEscapingThroughSymlink(t *testing.T) {
 	}
 }
 
+func TestTreeSHA256RejectsInnerSymlinkEscapingSourceTree(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "outside.txt"), []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "inside.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", filepath.Base(outside), "outside.txt"), filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := releaseinfo.TreeSHA256(root)
+	if err == nil || !strings.Contains(err.Error(), "unsafe source symlink") {
+		t.Fatalf("TreeSHA256() error = %v, want unsafe source symlink error", err)
+	}
+}
+
+func TestTreeSHA256RejectsDanglingInnerSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "inside.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing.txt", filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := releaseinfo.TreeSHA256(root)
+	if err == nil || !strings.Contains(err.Error(), "resolve target") {
+		t.Fatalf("TreeSHA256() error = %v, want dangling symlink error", err)
+	}
+}
+
+func TestTreeSHA256AcceptsRelativeInnerSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dir", "target.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("dir", "target.txt"), filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := releaseinfo.TreeSHA256(root); err != nil {
+		t.Fatalf("TreeSHA256() error = %v, want safe relative symlink accepted", err)
+	}
+}
+
 func TestLoadRejectsUnsafeSourcePath(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, `{

@@ -97,6 +97,18 @@ fi
 runtime_uid=$("$engine" exec "$container" /usr/bin/id -u)
 [ "$runtime_uid" = "10001" ] || { printf 'ERROR: runtime UID is %s, expected 10001\n' "$runtime_uid" >&2; exit 1; }
 
+"$engine" run --rm --entrypoint /bin/sh "$image" -eu -c '
+  embedded=/usr/share/vpsmith/embedded
+  test -d "$embedded"
+  test "$(stat -c %u:%g "$embedded")" = "0:0"
+  test -z "$(find "$embedded" \( ! -user root -o ! -group root \) -print -quit)"
+  test -z "$(find "$embedded" -perm /222 -print -quit)"
+  if : > "$embedded/.write-check" 2>/dev/null; then
+    echo "ERROR: runtime user can modify embedded release inputs" >&2
+    exit 1
+  fi
+'
+
 image_env=$("$engine" image inspect "$image" --format '{{range .Config.Env}}{{println .}}{{end}}')
 if printf '%s\n' "$image_env" | grep -Eiq '(^|_)(GITHUB_TOKEN|GH_TOKEN|VPSMITH_GITHUB)='; then
   printf 'ERROR: VPSmith Github credential/configuration found in image environment\n%s\n' "$image_env" >&2

@@ -171,7 +171,7 @@ func sourceRoot(root, relative string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if pathEscapesRoot(rel) {
 		return "", fmt.Errorf("path %q escapes embedded root", relative)
 	}
 	return resolvedCandidate, nil
@@ -182,13 +182,17 @@ func validateRelativePath(value string) error {
 		return errors.New("path is required")
 	}
 	clean := filepath.Clean(filepath.FromSlash(value))
-	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	if filepath.IsAbs(clean) || clean == "." || pathEscapesRoot(clean) {
 		return fmt.Errorf("path %q must stay inside embedded root", value)
 	}
 	if filepath.ToSlash(clean) != value {
 		return fmt.Errorf("path %q must use a clean POSIX relative path", value)
 	}
 	return nil
+}
+
+func pathEscapesRoot(relative string) bool {
+	return relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func validateSHA256(value string) error {
@@ -204,8 +208,9 @@ func validateSHA256(value string) error {
 
 // TreeSHA256 calculates the canonical identity of a source tree. Directory
 // entries are omitted; regular files and symlinks are sorted by POSIX path.
-// Each regular file contributes its path, Unix permissions, size, and content SHA-256. Symlinks
-// contribute their path and target and are never followed.
+// Each regular file contributes its path, Unix permissions, size, and content SHA-256.
+// Symlinks contribute their path and target, are never followed for hashing, and
+// must resolve to an existing entry inside the same source tree.
 func TreeSHA256(root string) (string, error) {
 	rootInfo, err := os.Lstat(root)
 	if err != nil {
@@ -216,6 +221,10 @@ func TreeSHA256(root string) (string, error) {
 	}
 	if !rootInfo.IsDir() {
 		return "", fmt.Errorf("%s is not a directory", root)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve source root: %w", err)
 	}
 
 	type entry struct {
@@ -256,6 +265,9 @@ func TreeSHA256(root string) (string, error) {
 			if err != nil {
 				return err
 			}
+			if err := validateTreeSymlink(resolvedRoot, path, target); err != nil {
+				return fmt.Errorf("unsafe source symlink %s: %w", relative, err)
+			}
 			entries = append(entries, entry{path: relative, mode: info.Mode(), target: filepath.ToSlash(target)})
 		default:
 			return fmt.Errorf("unsupported source entry %s with mode %s", relative, info.Mode())
@@ -285,6 +297,32 @@ func TreeSHA256(root string) (string, error) {
 		writeCanonicalField(hash, current.digest)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func validateTreeSymlink(resolvedRoot, path, target string) error {
+	if filepath.IsAbs(target) {
+		return errors.New("target must be relative")
+	}
+	candidate := filepath.Clean(filepath.Join(filepath.Dir(path), target))
+	lexicalRelative, err := filepath.Rel(resolvedRoot, candidate)
+	if err != nil {
+		return err
+	}
+	if pathEscapesRoot(lexicalRelative) {
+		return errors.New("target escapes source tree")
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return fmt.Errorf("resolve target: %w", err)
+	}
+	resolvedRelative, err := filepath.Rel(resolvedRoot, resolvedTarget)
+	if err != nil {
+		return err
+	}
+	if pathEscapesRoot(resolvedRelative) {
+		return errors.New("target resolves outside source tree")
+	}
+	return nil
 }
 
 func writeCanonicalField(writer io.Writer, value string) {

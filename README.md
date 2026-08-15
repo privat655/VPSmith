@@ -7,15 +7,16 @@ Step 1 provides only the executable VPSmith Studio foundation. VPSmith Studio ru
 ## Step 1 runtime contract
 
 - VPSmith Studio listens only on `127.0.0.1:8787`.
-- The image starts with Docker or Podman on a Linux administrative workstation.
+- Version 1 supports a Linux/amd64 administrative workstation with Docker or Podman. Windows, macOS, and other workstation architectures are outside the Version 1 support envelope.
 - Runtime state is persistent only through three mount points:
   - `/var/lib/vpsmith/state` — future administrative state;
   - `/var/lib/vpsmith/sources` — future local sources library;
   - `/var/lib/vpsmith/backups` — future local backup storage.
 - The image contains identified Cloud-init, Core, and public n8n example-module basis snapshots under `/usr/share/vpsmith/embedded`.
+- Embedded basis snapshots are immutable runtime input: they are owned by `root:root`, have no write bits, and are readable by the non-root Studio process.
 - VPSmith Studio has no runtime remote, token, or credential for the VPSmith Github. Updating the VPSmith Platform image is the only path by which a new released VPSmith Studio/Cloud-init/Core/n8n basis enters a running installation.
 
-The embedded Cloud-init, Core, and n8n directories in step 1 are explicit non-deployable scaffolds. They establish build identity without implementing later lifecycle steps early.
+The embedded Cloud-init, Core, and n8n directories in step 1 are explicit non-deployable scaffolds. They establish build identity without implementing later lifecycle steps early. Embedded-tree symlinks, if introduced later, must be relative and resolve to an existing target within the same source tree; dangling, absolute, or escaping symlinks are rejected.
 
 ## Build
 
@@ -32,7 +33,7 @@ make verify-go
 
 ## Run
 
-The local start contract deliberately uses host networking so the process itself can bind to loopback. There is no published wildcard container port.
+The Version 1 start contract deliberately uses Linux host networking so the process itself can bind to loopback. There is no published wildcard container port.
 
 ```sh
 ./build/run.sh docker
@@ -54,4 +55,4 @@ make verify-go
 ./build/verify-reproducible-image.sh podman
 ```
 
-The container checks verify HTTP health, the actual host listener, persistent mount writeability, read-only root filesystem, runtime UID, embedded identities, and the absence of `.git` or VPSmith Github credentials/configuration in the runtime image.
+The container checks verify HTTP health, the actual host listener, persistent mount writeability, read-only root filesystem, runtime UID, root-owned/non-writable embedded basis snapshots, embedded identities, and the absence of `.git` or VPSmith Github credentials/configuration in the runtime image.
