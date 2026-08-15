@@ -13,7 +13,7 @@ Step 1 provides only the executable VPSmith Studio foundation. VPSmith Studio ru
   - `/var/lib/vpsmith/sources` — future local sources library;
   - `/var/lib/vpsmith/backups` — future local backup storage.
 - The image contains identified Cloud-init, Core, and public n8n example-module basis snapshots under `/usr/share/vpsmith/embedded`.
-- Embedded basis snapshots are immutable runtime input: they are owned by `root:root`, have no write bits, and are readable by the non-root Studio process.
+- Embedded basis snapshots are immutable to the Studio runtime: they are owned by `root:root`, retain their release-hashed modes, have no group/other write permission, and cannot be modified by the non-root Studio process.
 - VPSmith Studio has no runtime remote, token, or credential for the VPSmith Github. Updating the VPSmith Platform image is the only path by which a new released VPSmith Studio/Cloud-init/Core/n8n basis enters a running installation.
 
 The embedded Cloud-init, Core, and n8n directories in step 1 are explicit non-deployable scaffolds. They establish build identity without implementing later lifecycle steps early. Embedded-tree symlinks, if introduced later, must be relative and resolve to an existing target within the same source tree; dangling, absolute, or escaping symlinks are rejected.
@@ -55,4 +55,4 @@ make verify-go
 ./build/verify-reproducible-image.sh podman
 ```
 
-The container checks verify HTTP health, the actual host listener, persistent mount writeability, read-only root filesystem, runtime UID, root-owned/non-writable embedded basis snapshots, embedded identities, and the absence of `.git` or VPSmith Github credentials/configuration in the runtime image.
+The container checks verify HTTP health, the actual host listener, persistent mount writeability, read-only root filesystem, runtime UID, root-owned/runtime-non-writable embedded basis snapshots, embedded identities, and the absence of `.git` or VPSmith Github credentials/configuration in the runtime image.

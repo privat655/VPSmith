@@ -37,7 +37,7 @@ Later deep VPSmith Platform modules are added under `internal` only when their r
 
 `embedded/manifest.json` is canonical build metadata for the image input. Each embedded source tree has an explicit version and SHA-256. The SHA-256 is a canonical tree digest over sorted POSIX paths. Regular files contribute path, Unix permission bits, byte size, and content digest; symlinks contribute path and target and are not followed for hashing. A source root may not escape `embedded/` through a symlink. Inner symlinks must use relative targets and must resolve to an existing entry inside the same source tree; dangling, absolute, or escaping targets fail closed. Unsupported filesystem entry types also fail closed.
 
-The embedded directory is release input, not mutable runtime state. It is copied into the runtime image as `root:root` and has all write bits removed. The non-root Studio process can read these basis snapshots but cannot alter them, even when the image is started without the normal read-only-rootfs flag.
+The embedded directory is release input, not mutable runtime state. It is copied into the runtime image as `root:root` while retaining the release-hashed Unix modes. Group and other write permission is forbidden, and the non-root Studio UID cannot modify these snapshots. This preserves the exact identity verified by the manifest instead of mutating permissions after hashing.
 
 The step-1 source trees are marked `0.1.0-scaffold.1` and are deliberately non-deployable. Historical scripts remain evidence; they are not copied into the new tree as an accidental second architecture.
 
