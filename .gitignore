@@ -1,0 +1,11 @@
+.vpsmith/
+dist/
+coverage/
+*.out
+*.log
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
