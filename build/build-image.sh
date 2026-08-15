@@ -60,9 +60,9 @@ else
     --file Containerfile \
     --build-arg "VERSION=$version" \
     --build-arg "REVISION=$revision" \
-    --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
-    --tag "$image" \
-    --timestamp "$source_date_epoch"
+    --source-date-epoch "$source_date_epoch" \
+    --rewrite-timestamp \
+    --tag "$image"
   if [ "${VPSMITH_BUILD_NO_CACHE:-0}" = "1" ]; then
     set -- "$@" --no-cache
   fi
