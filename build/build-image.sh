@@ -28,25 +28,35 @@ if [ "$source_date_epoch" -le 0 ]; then
 fi
 
 image="${VPSMITH_IMAGE_TAG:-ghcr.io/privat655/vpsmith-platform:${version}}"
-set -- build \
-  --file Containerfile \
-  --build-arg "VERSION=$version" \
-  --build-arg "REVISION=$revision" \
-  --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
-  --tag "$image"
-
-if [ "${VPSMITH_BUILD_NO_CACHE:-0}" = "1" ]; then
-  set -- "$@" --no-cache
-fi
-
-if [ "$engine" = "podman" ]; then
-  set -- "$@" --timestamp "$source_date_epoch"
-fi
 
 printf 'Building %s with %s (revision %s, SOURCE_DATE_EPOCH=%s)\n' "$image" "$engine" "$revision" "$source_date_epoch" >&2
+
 if [ "$engine" = "docker" ]; then
-  DOCKER_BUILDKIT=1 docker "$@" . >&2
+  set -- buildx build \
+    --file Containerfile \
+    --build-arg "VERSION=$version" \
+    --build-arg "REVISION=$revision" \
+    --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
+    --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
+    --provenance=false \
+    --sbom=false \
+    --output "type=image,name=$image,rewrite-timestamp=true"
+  if [ "${VPSMITH_BUILD_NO_CACHE:-0}" = "1" ]; then
+    set -- "$@" --no-cache
+  fi
+  SOURCE_DATE_EPOCH="$source_date_epoch" docker "$@" . >&2
 else
+  set -- build \
+    --file Containerfile \
+    --build-arg "VERSION=$version" \
+    --build-arg "REVISION=$revision" \
+    --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
+    --tag "$image" \
+    --timestamp "$source_date_epoch"
+  if [ "${VPSMITH_BUILD_NO_CACHE:-0}" = "1" ]; then
+    set -- "$@" --no-cache
+  fi
   podman "$@" . >&2
 fi
+
 printf '%s\n' "$image"
