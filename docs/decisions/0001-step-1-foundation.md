@@ -59,7 +59,7 @@ The corresponding default named volumes are `vpsmith-state`, `vpsmith-sources`, 
 
 The build is a multi-stage OCI build. Builder and runtime base images are pinned to explicit upstream digests. The runtime process is UID/GID `10001:10001`. The repository reserves `ghcr.io/privat655/vpsmith-platform` as the image name; step 1 does not publish releases or add registry credentials.
 
-The build receives version, Git revision, and `SOURCE_DATE_EPOCH` explicitly. Go builds use `-trimpath` and `-buildvcs=false`. Docker uses a named `docker-container` Buildx builder pinned to BuildKit 0.30.0 plus the Docker exporter with `SOURCE_DATE_EPOCH`, deterministic multi-platform mode, disabled attestations, and `rewrite-timestamp=true` so filesystem timestamps are normalized as well. Podman receives the same `SOURCE_DATE_EPOCH` build arg plus `--timestamp`. CI checks reproducible image IDs independently for both engines.
+The build receives version, Git revision, and `SOURCE_DATE_EPOCH` explicitly. Go builds use `-trimpath` and `-buildvcs=false`. Docker uses a named `docker-container` Buildx builder pinned to BuildKit 0.30.0 plus the Docker exporter with `SOURCE_DATE_EPOCH`, a fixed `linux/amd64` platform, disabled attestations, and `rewrite-timestamp=true` so filesystem timestamps are normalized as well. Podman receives the same `SOURCE_DATE_EPOCH` build arg plus `--timestamp`. CI checks reproducible image IDs independently for both engines.
 
 ### Supported platforms
 
