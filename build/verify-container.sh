@@ -103,7 +103,8 @@ runtime_uid=$("$engine" exec "$container" /usr/bin/id -u)
   test "$(stat -c %u:%g "$embedded")" = "0:0"
   test -z "$(find "$embedded" \( ! -user root -o ! -group root \) -print -quit)"
   test -z "$(find "$embedded" -perm /022 -print -quit)"
-  if : > "$embedded/.write-check" 2>/dev/null; then
+  if touch "$embedded/.write-check" 2>/dev/null; then
+    rm -f "$embedded/.write-check"
     echo "ERROR: runtime user can modify embedded release inputs" >&2
     exit 1
   fi
