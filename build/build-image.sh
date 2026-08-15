@@ -44,10 +44,10 @@ if [ "$engine" = "docker" ]; then
   set -- buildx build \
     --builder "$builder" \
     --file Containerfile \
+    --platform linux/amd64 \
     --build-arg "VERSION=$version" \
     --build-arg "REVISION=$revision" \
     --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
-    --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
     --provenance=false \
     --sbom=false \
     --output "type=docker,name=$image,rewrite-timestamp=true"
