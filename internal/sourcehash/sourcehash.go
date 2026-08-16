@@ -107,6 +107,11 @@ func TreeSHA256(root string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// RelevantPath reports whether a relative source path contributes to the canonical package identity.
+func RelevantPath(rel string, isDir bool) bool {
+	return !ignored(rel, isDir)
+}
+
 func ignored(rel string, isDir bool) bool {
 	base := filepath.Base(filepath.FromSlash(rel))
 	parts := strings.Split(rel, "/")
