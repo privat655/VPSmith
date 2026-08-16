@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -77,8 +78,8 @@ func TestStudioRestartPreservesManagementState(t *testing.T) {
 	if len(after.Targets) != 1 || after.Targets[0].ID != targetID {
 		t.Fatalf("target state lost across Studio restart: %#v", after.Targets)
 	}
-	if len(before.Targets) != len(after.Targets) || before.Targets[0] != after.Targets[0] {
-		t.Fatalf("management state changed across Studio restart\nbefore=%#v\nafter=%#v", before.Targets, after.Targets)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("management state changed across Studio restart\nbefore=%#v\nafter=%#v", before, after)
 	}
 }
 
