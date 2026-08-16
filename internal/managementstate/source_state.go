@@ -65,23 +65,6 @@ type SourceState struct {
 	CustomModuleGithub *CustomModuleGithubConfig `json:"custom_module_github,omitempty"`
 }
 
-type AdministrativeSnapshot struct {
-	Management Snapshot    `json:"management"`
-	Sources    SourceState `json:"sources"`
-}
-
-func (s *Store) AdministrativeSnapshot(ctx context.Context) (AdministrativeSnapshot, error) {
-	management, err := s.Snapshot(ctx)
-	if err != nil {
-		return AdministrativeSnapshot{}, err
-	}
-	sources, err := s.Sources(ctx)
-	if err != nil {
-		return AdministrativeSnapshot{}, err
-	}
-	return AdministrativeSnapshot{Management: management, Sources: sources}, nil
-}
-
 func (s *Store) Sources(ctx context.Context) (SourceState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
