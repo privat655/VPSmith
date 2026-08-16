@@ -22,12 +22,12 @@ RUN test -n "$VERSION" \
        -o /out/vpsmith-studio \
        ./cmd/vpsmith-studio
 
-# Resolve the exact Git runtime payload from the pinned Debian snapshot, but do
-# not install it into the final image. Package maintainer scripts create logs
-# and caches that contain per-build state and would make otherwise identical
-# images differ. Extracting the immutable .deb payloads gives the runtime the
-# same Git files and libraries without carrying package-manager side effects.
-FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS git-runtime
+# Resolve the exact Git and OpenSSH client runtime payloads from the pinned
+# Debian snapshot, but do not install them into the final image. Package
+# maintainer scripts create logs/caches with per-build state. Extracting the
+# immutable .deb payloads preserves reproducible final images while providing
+# the real Git and OpenSSH implementations behind VPSmith's narrow adapters.
+FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS client-runtime
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
@@ -36,11 +36,15 @@ RUN printf '%s\n' \
       > /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/* \
     && apt-get update \
-    && apt-get install -y --download-only --no-install-recommends git=1:2.39.5-0+deb12u3 \
-    && mkdir -p /git-root \
-    && for package in /var/cache/apt/archives/*.deb; do dpkg-deb -x "$package" /git-root; done \
-    && if [ -d /git-root/lib ]; then mkdir -p /git-root/usr/lib; cp -a /git-root/lib/. /git-root/usr/lib/; rm -rf /git-root/lib; fi \
-    && test -x /git-root/usr/bin/git
+    && apt-get install -y --download-only --no-install-recommends \
+       git=1:2.39.5-0+deb12u3 \
+       openssh-client \
+    && mkdir -p /client-root \
+    && for package in /var/cache/apt/archives/*.deb; do dpkg-deb -x "$package" /client-root; done \
+    && if [ -d /client-root/lib ]; then mkdir -p /client-root/usr/lib; cp -a /client-root/lib/. /client-root/usr/lib/; rm -rf /client-root/lib; fi \
+    && test -x /client-root/usr/bin/git \
+    && test -x /client-root/usr/bin/ssh \
+    && test -x /client-root/usr/bin/ssh-keyscan
 
 FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
@@ -48,7 +52,7 @@ ARG VERSION
 ARG REVISION
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=git-runtime /git-root/usr/ /usr/
+COPY --from=client-runtime /client-root/usr/ /usr/
 
 RUN mkdir -p \
       /var/lib/vpsmith/state \
@@ -63,6 +67,8 @@ COPY --chown=0:0 embedded/ /usr/share/vpsmith/embedded/
 COPY --chmod=0555 --chown=0:0 build/vpsmith-git-askpass.sh /usr/local/libexec/vpsmith-git-askpass
 
 RUN git --version | grep -F 'git version 2.39.5' \
+    && ssh -V 2>&1 | grep -F 'OpenSSH_' \
+    && test -x /usr/bin/ssh-keyscan \
     && /usr/local/bin/vpsmith-studio version >/dev/null
 
 LABEL org.opencontainers.image.title="VPSmith Platform" \

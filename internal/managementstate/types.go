@@ -127,30 +127,50 @@ type DesiredState struct {
 }
 
 type CloudInitObservedState struct {
+	Present    bool   `json:"present"`
 	Status     string `json:"status,omitempty"`
 	Version    string `json:"version,omitempty"`
 	FinishedAt string `json:"finished_at,omitempty"`
 }
 
 type CoreObservedState struct {
-	SourceID CoreSourceID `json:"source_id,omitempty"`
-	Version  string       `json:"version,omitempty"`
-	Running  bool         `json:"running"`
+	Present          bool                           `json:"present"`
+	SourceID         CoreSourceID                   `json:"source_id,omitempty"`
+	Version          string                         `json:"version,omitempty"`
+	PackageSHA256    string                         `json:"package_sha256,omitempty"`
+	Running          bool                           `json:"running"`
+	Podman           PodmanObservedState            `json:"podman"`
+	Units            []UnitObservedState            `json:"units,omitempty"`
+	Containers       []ContainerObservedState       `json:"containers,omitempty"`
+	Networks         []NetworkObservedState         `json:"networks,omitempty"`
+	Caddy            ServiceObservedState           `json:"caddy"`
+	Authelia         ServiceObservedState           `json:"authelia"`
+	ExecutionProofs  []ExecutionProofObservedState  `json:"execution_proofs,omitempty"`
+	ManagedArtifacts []ManagedArtifactObservedState `json:"managed_artifacts,omitempty"`
 }
 
 type ModuleObservedState struct {
-	InstanceID ModuleInstanceID `json:"instance_id"`
-	PackageID  ModulePackageID  `json:"package_id,omitempty"`
-	Version    string           `json:"version,omitempty"`
-	Running    bool             `json:"running"`
-	Health     string           `json:"health,omitempty"`
+	Present          bool                           `json:"present"`
+	InstanceID       ModuleInstanceID               `json:"instance_id"`
+	PackageID        ModulePackageID                `json:"package_id,omitempty"`
+	Version          string                         `json:"version,omitempty"`
+	PackageSHA256    string                         `json:"package_sha256,omitempty"`
+	Running          bool                           `json:"running"`
+	Health           string                         `json:"health,omitempty"`
+	Units            []UnitObservedState            `json:"units,omitempty"`
+	Containers       []ContainerObservedState       `json:"containers,omitempty"`
+	Networks         []NetworkObservedState         `json:"networks,omitempty"`
+	ManagedArtifacts []ManagedArtifactObservedState `json:"managed_artifacts,omitempty"`
 }
 
 type ObservedState struct {
-	ObservedAt string                 `json:"observed_at,omitempty"`
-	CloudInit  CloudInitObservedState `json:"cloud_init"`
-	Core       CoreObservedState      `json:"core"`
-	Modules    []ModuleObservedState  `json:"modules,omitempty"`
+	ObservedAt       string                         `json:"observed_at,omitempty"`
+	Host             HostObservedState              `json:"host"`
+	CloudInit        CloudInitObservedState         `json:"cloud_init"`
+	Core             CoreObservedState              `json:"core"`
+	Modules          []ModuleObservedState          `json:"modules,omitempty"`
+	LinkNetworks     []LinkNetworkObservedState     `json:"link_networks,omitempty"`
+	ManagedArtifacts []ManagedArtifactObservedState `json:"managed_artifacts,omitempty"`
 }
 
 type CoreSourceRole string
@@ -275,9 +295,7 @@ func (s *Snapshot) normalize() {
 		sort.Slice(s.Targets[i].Desired.Modules, func(a, b int) bool {
 			return s.Targets[i].Desired.Modules[a].InstanceID < s.Targets[i].Desired.Modules[b].InstanceID
 		})
-		sort.Slice(s.Targets[i].Observed.Modules, func(a, b int) bool {
-			return s.Targets[i].Observed.Modules[a].InstanceID < s.Targets[i].Observed.Modules[b].InstanceID
-		})
+		NormalizeObservedState(&s.Targets[i].Observed)
 	}
 	sort.Slice(s.Targets, func(i, j int) bool { return s.Targets[i].ID < s.Targets[j].ID })
 	sort.Slice(s.CoreSources, func(i, j int) bool { return s.CoreSources[i].ID < s.CoreSources[j].ID })
