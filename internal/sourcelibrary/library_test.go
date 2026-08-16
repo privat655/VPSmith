@@ -172,7 +172,7 @@ func TestCoreThreeWayMergeProducesCandidateOrExplicitConflict(t *testing.T) {
 	store, _ := managementstate.NewMemory()
 	defer store.Close()
 	lib, _ := New(t.TempDir(), repositoryPath(t, "embedded"), store, &fakeRemote{})
-	oldDir := tree(t, "line1\nline2\n")
+	oldDir := tree(t, "line1\nkeep1\nkeep2\nkeep3\nline5\n")
 	old, err := lib.importSnapshot(ctx, managementstate.SourceCore, "", "", "1", "", oldDir, "")
 	if err != nil {
 		t.Fatal(err)
@@ -181,11 +181,11 @@ func TestCoreThreeWayMergeProducesCandidateOrExplicitConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = lib.Apply(ctx, ws.ID, []Edit{{Path: "file.txt", Content: []byte("local\nline2\n"), Mode: 0o644}})
+	_, err = lib.Apply(ctx, ws.ID, []Edit{{Path: "file.txt", Content: []byte("local\nkeep1\nkeep2\nkeep3\nline5\n"), Mode: 0o644}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	newDir := tree(t, "line1\nupstream\n")
+	newDir := tree(t, "line1\nkeep1\nkeep2\nkeep3\nupstream\n")
 	newSnap, err := lib.importSnapshot(ctx, managementstate.SourceCore, "", "", "2", "", newDir, "")
 	if err != nil {
 		t.Fatal(err)
