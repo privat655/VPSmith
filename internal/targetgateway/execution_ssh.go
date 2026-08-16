@@ -73,7 +73,7 @@ tar -xOf "$bundle" ` + shellQuote(request.Runner.Path) + ` > "$runner"
 rgot=$(sha256sum "$runner"); rgot=${rgot%% *}
 [ "$rgot" = "` + request.Runner.SHA256 + `" ] || { echo 'target runner sha256 mismatch' >&2; exit 48; }
 chmod 0500 "$runner"
-systemd-run --quiet --collect --unit=` + shellQuote(unit) + ` --property=Type=exec --property=UMask=0077 --property=StandardOutput=null --property=StandardError=null "$python" "$runner" --bundle "$bundle" --bundle-id ` + shellQuote(request.BundleID) + ` --bundle-sha256 ` + shellQuote(request.BundleSHA256) + ` --target-id ` + shellQuote(request.TargetID) + ` --run-id ` + shellQuote(request.RunID) + ` --admin-user ` + shellQuote(sess.SSHUser) + ` --secret-fifo ` + shellQuote(fifo) + ` --work-dir ` + shellQuote(work) + `
+systemd-run --quiet --collect --unit=` + shellQuote(unit) + ` --property=Type=exec --property=UMask=0077 --property=StandardOutput=null --property=StandardError=null "$python" "$runner" --bundle "$bundle" --bundle-id ` + shellQuote(request.BundleID) + ` --bundle-sha256 ` + shellQuote(request.BundleSHA256) + ` --target-id ` + shellQuote(request.TargetID) + ` --run-id ` + shellQuote(request.RunID) + ` --admin-user ` + shellQuote(sess.SSHUser) + ` --secret-fifo ` + shellQuote(fifo) + ` --work-dir ` + shellQuote(work) + ``
 	_, stderr, err := t.runRemoteInput(ctx, sess, "sudo -n sh -eu -c "+shellQuote(script), nil)
 	if err != nil {
 		return fmt.Errorf("start detached execution runner: %w%s", err, boundedRemoteError(stderr))
