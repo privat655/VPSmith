@@ -119,7 +119,10 @@ func (r *gitRemote) Push(ctx context.Context, req PushRequest) (PushResult, erro
 		return PushResult{}, err
 	}
 	if actual != req.BaseCommit {
-		return PushResult{}, &RemoteDriftError{Expected: req.BaseCommit, Actual: actual}
+		// Return drift as data instead of a callback error. managementstate intentionally
+		// redacts arbitrary secret-consumer errors; the Library turns this mismatch into
+		// the structured RemoteDriftError after the PAT has left scope.
+		return PushResult{Commit: req.BaseCommit, RemoteCommit: actual}, nil
 	}
 	if err := runGit(ctx, work, req.Config.Token, "checkout", "-q", "--detach", actual); err != nil {
 		return PushResult{}, err
@@ -162,7 +165,7 @@ func (r *gitRemote) Push(ctx context.Context, req PushRequest) (PushResult, erro
 	if err := runGit(ctx, work, req.Config.Token, "push", url, "HEAD:"+pushRef); err != nil {
 		observed, _ := r.readRemoteRef(ctx, req.Config, url)
 		if observed != "" && observed != req.BaseCommit {
-			return PushResult{}, &RemoteDriftError{Expected: req.BaseCommit, Actual: observed}
+			return PushResult{Commit: req.BaseCommit, RemoteCommit: observed}, nil
 		}
 		return PushResult{}, fmt.Errorf("push custom module commit rejected: %w", err)
 	}
