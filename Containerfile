@@ -39,6 +39,7 @@ RUN printf '%s\n' \
     && apt-get install -y --download-only --no-install-recommends git=1:2.39.5-0+deb12u3 \
     && mkdir -p /git-root \
     && for package in /var/cache/apt/archives/*.deb; do dpkg-deb -x "$package" /git-root; done \
+    && if [ -d /git-root/lib ]; then mkdir -p /git-root/usr/lib; cp -a /git-root/lib/. /git-root/usr/lib/; rm -rf /git-root/lib; fi \
     && test -x /git-root/usr/bin/git
 
 FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
@@ -47,7 +48,7 @@ ARG VERSION
 ARG REVISION
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=git-runtime /git-root/ /
+COPY --from=git-runtime /git-root/usr/ /usr/
 
 RUN mkdir -p \
       /var/lib/vpsmith/state \
