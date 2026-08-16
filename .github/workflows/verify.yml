@@ -12,41 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  one-time-snapshot-consistency:
-    if: github.ref == 'refs/heads/agent/step-2-management-state'
-    permissions:
-      contents: write
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: true
-      - name: Serialize snapshots against domain writes
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('internal/managementstate/store.go')
-          text = p.read_text()
-          text = text.replace('\t"strings"\n', '\t"strings"\n\t"sync"\n', 1)
-          text = text.replace('type Store struct {\n\tdb  *sql.DB\n\tkey []byte\n}', 'type Store struct {\n\tdb  *sql.DB\n\tkey []byte\n\tmu  sync.RWMutex\n}', 1)
-          text = text.replace('func (s *Store) Close() error {\n', 'func (s *Store) Close() error {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n', 1)
-          text = text.replace('func (s *Store) Change(ctx context.Context, fn func(*Change) error) error {\n', 'func (s *Store) Change(ctx context.Context, fn func(*Change) error) error {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n', 1)
-          text = text.replace('func (s *Store) ResolveSecret(ctx context.Context, id SecretID, consume func(SecretMaterial) error) error {\n', 'func (s *Store) ResolveSecret(ctx context.Context, id SecretID, consume func(SecretMaterial) error) error {\n\ts.mu.RLock()\n\tdefer s.mu.RUnlock()\n', 1)
-          text = text.replace('func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {\n', 'func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {\n\ts.mu.RLock()\n\tdefer s.mu.RUnlock()\n', 1)
-          p.write_text(text)
-          PY
-          docker run --rm \
-            --volume "$PWD:/src" \
-            --workdir /src \
-            golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 \
-            sh -eu -c 'gofmt -w internal/managementstate/store.go'
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add internal/managementstate/store.go
-          git commit -m 'Make management-state snapshots consistent'
-          git push origin HEAD:agent/step-2-management-state
-
   go:
     runs-on: ubuntu-24.04
     steps:
@@ -54,6 +19,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
       - name: Verify Go code with pinned toolchain image
         run: |
           docker run --rm \
@@ -70,15 +36,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
       - name: Verify shell scripts parse
         run: sh -n build/*.sh
+
       - name: Verify Docker runtime contract
         run: ./build/verify-container.sh docker
+
       - name: Verify Docker reproducibility
         run: ./build/verify-reproducible-image.sh docker
+
       - name: Verify Podman is available
         run: podman --version
+
       - name: Verify Podman runtime contract
         run: ./build/verify-container.sh podman
+
       - name: Verify Podman reproducibility
         run: ./build/verify-reproducible-image.sh podman
