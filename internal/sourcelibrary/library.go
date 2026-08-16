@@ -77,7 +77,10 @@ type MergeResult struct {
 	Conflicts []string   `json:"conflicts"`
 }
 
-type RemoteDriftError struct{ Expected, Actual string }
+type RemoteDriftError struct {
+	Expected string
+	Actual   string
+}
 
 func (e *RemoteDriftError) Error() string {
 	return fmt.Sprintf("custom module remote drift: expected %s, actual %s", e.Expected, e.Actual)
@@ -90,7 +93,10 @@ func New(root, embeddedRoot string, state *managementstate.Store, remote Remote)
 	if remote == nil {
 		return nil, errors.New("custom module remote adapter is required")
 	}
-	for _, p := range []string{filepath.Join(root, "snapshots", "sha256"), filepath.Join(root, "workspaces")} {
+	for _, p := range []string{
+		filepath.Join(root, "snapshots", "sha256"),
+		filepath.Join(root, "workspaces"),
+	} {
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			return nil, fmt.Errorf("create source library: %w", err)
 		}
@@ -138,14 +144,21 @@ func (l *Library) CreateWorkspace(ctx context.Context, snapshotID managementstat
 	}
 	sha, err := sourcehash.TreeSHA256(dst)
 	if err != nil {
-		return Workspace{}, err
-	}
-	v := managementstate.SourceWorkspace{ID: id, Kind: a.Kind, PackageID: a.PackageID, PackagePath: a.PackagePath, BaseSourceID: a.ID, BaseCommit: a.Commit, CurrentSHA256: sha, StorageRef: filepath.ToSlash(filepath.Join("workspaces", string(id)))}
-	if err := l.state.Change(ctx, func(c *managementstate.Change) error { return c.CreateSourceWorkspace(v) }); err != nil {
 		_ = os.RemoveAll(dst)
 		return Workspace{}, err
 	}
-	return workspaceFromState(v), nil
+	value := managementstate.SourceWorkspace{
+		ID: id, Kind: a.Kind, PackageID: a.PackageID, PackagePath: a.PackagePath,
+		BaseSourceID: a.ID, BaseCommit: a.Commit, CurrentSHA256: sha,
+		StorageRef: filepath.ToSlash(filepath.Join("workspaces", string(id))),
+	}
+	if err := l.state.Change(ctx, func(c *managementstate.Change) error {
+		return c.CreateSourceWorkspace(value)
+	}); err != nil {
+		_ = os.RemoveAll(dst)
+		return Workspace{}, err
+	}
+	return workspaceFromState(value), nil
 }
 
 func (l *Library) Apply(ctx context.Context, id managementstate.SourceWorkspaceID, edits []Edit) (Workspace, error) {
@@ -179,14 +192,6 @@ func (l *Library) Apply(ctx context.Context, id managementstate.SourceWorkspaceI
 	return l.RefreshWorkspace(ctx, id)
 }
 
-func validateRelativeEditPath(v string) error {
-	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(v)))
-	if v == "" || clean == "." || clean != v || filepath.IsAbs(filepath.FromSlash(v)) || v == ".." || strings.HasPrefix(v, "../") || strings.HasPrefix(v, ".git/") || v == ".git" {
-		return fmt.Errorf("workspace path %q must be a clean relative non-git path", v)
-	}
-	return nil
-}
-
 func (l *Library) RefreshWorkspace(ctx context.Context, id managementstate.SourceWorkspaceID) (Workspace, error) {
 	w, err := l.workspace(ctx, id)
 	if err != nil {
@@ -196,7 +201,9 @@ func (l *Library) RefreshWorkspace(ctx context.Context, id managementstate.Sourc
 	if err != nil {
 		return Workspace{}, err
 	}
-	if err := l.state.Change(ctx, func(c *managementstate.Change) error { return c.UpdateSourceWorkspaceCurrent(id, sha) }); err != nil {
+	if err := l.state.Change(ctx, func(c *managementstate.Change) error {
+		return c.UpdateSourceWorkspaceCurrent(id, sha)
+	}); err != nil {
 		return Workspace{}, err
 	}
 	w.CurrentSHA256 = sha
@@ -224,7 +231,10 @@ func (l *Library) LoadCustomModule(ctx context.Context, packagePath, version str
 	var fetched FetchResult
 	err = l.state.ResolveSecret(ctx, cfg.PATSecretID, func(secret managementstate.SecretMaterial) error {
 		var inner error
-		fetched, inner = l.remote.Fetch(ctx, RemoteConfig{Owner: cfg.Owner, Repository: cfg.Repository, Ref: cfg.Ref, Token: string(secret.Bytes())}, packagePath)
+		fetched, inner = l.remote.Fetch(ctx, RemoteConfig{
+			Owner: cfg.Owner, Repository: cfg.Repository, Ref: cfg.Ref,
+			Token: string(secret.Bytes()),
+		}, packagePath)
 		return inner
 	})
 	if err != nil {
@@ -263,7 +273,14 @@ func (l *Library) PushCustomModule(ctx context.Context, id managementstate.Sourc
 	var pushed PushResult
 	err = l.state.ResolveSecret(ctx, cfg.PATSecretID, func(secret managementstate.SecretMaterial) error {
 		var inner error
-		pushed, inner = l.remote.Push(ctx, PushRequest{Config: RemoteConfig{Owner: cfg.Owner, Repository: cfg.Repository, Ref: cfg.Ref, Token: string(secret.Bytes())}, PackagePath: w.PackagePath, WorkspacePath: l.workspacePath(w), BaseCommit: w.BaseCommit, Message: message})
+		pushed, inner = l.remote.Push(ctx, PushRequest{
+			Config: RemoteConfig{
+				Owner: cfg.Owner, Repository: cfg.Repository, Ref: cfg.Ref,
+				Token: string(secret.Bytes()),
+			},
+			PackagePath: w.PackagePath, WorkspacePath: l.workspacePath(w),
+			BaseCommit: w.BaseCommit, Message: message,
+		})
 		return inner
 	})
 	if err != nil {
@@ -309,7 +326,7 @@ func (l *Library) MergeCore(ctx context.Context, id managementstate.SourceWorksp
 	if newArtifact.Kind != managementstate.SourceCore {
 		return MergeResult{}, errors.New("new core base is not a core snapshot")
 	}
-	merged, conflicts, err := threeWayMerge(l.snapshotPath(oldBase.SHA256), l.workspacePath(w), l.snapshotPath(newArtifact.SHA256))
+	merged, conflicts, err := threeWayMerge(ctx, l.snapshotPath(oldBase.SHA256), l.workspacePath(w), l.snapshotPath(newArtifact.SHA256))
 	if err != nil {
 		return MergeResult{}, err
 	}
@@ -332,6 +349,19 @@ func (l *Library) importSnapshot(ctx context.Context, kind managementstate.Sourc
 	if expected != "" && sha != expected {
 		return Snapshot{}, fmt.Errorf("embedded source sha256 mismatch: expected=%s actual=%s", expected, sha)
 	}
+	state, err := l.state.Sources(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	for _, a := range state.Artifacts {
+		if a.Kind == kind && a.PackageID == packageID && a.Commit == commit && a.SHA256 == sha {
+			if err := l.verifySnapshot(a); err != nil {
+				return Snapshot{}, err
+			}
+			return snapshotFromState(a), nil
+		}
+	}
+
 	dst := l.snapshotPath(sha)
 	if _, err := os.Stat(dst); errors.Is(err, os.ErrNotExist) {
 		tmp, err := os.MkdirTemp(filepath.Join(l.root, "snapshots"), ".import-*")
@@ -350,38 +380,48 @@ func (l *Library) importSnapshot(ctx context.Context, kind managementstate.Sourc
 		if check != sha {
 			return Snapshot{}, errors.New("source changed while importing")
 		}
-		if err := os.Rename(payload, dst); err != nil && !os.IsExist(err) {
-			return Snapshot{}, fmt.Errorf("publish immutable snapshot: %w", err)
+		if err := os.Rename(payload, dst); err != nil {
+			if _, statErr := os.Stat(dst); statErr != nil {
+				return Snapshot{}, fmt.Errorf("publish immutable snapshot: %w", err)
+			}
 		}
 	} else if err != nil {
 		return Snapshot{}, err
-	} else {
-		check, err := sourcehash.TreeSHA256(dst)
-		if err != nil {
-			return Snapshot{}, err
-		}
-		if check != sha {
-			return Snapshot{}, errors.New("immutable snapshot integrity failure")
-		}
 	}
-	state, err := l.state.Sources(ctx)
+	check, err := sourcehash.TreeSHA256(dst)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	for _, a := range state.Artifacts {
-		if a.Kind == kind && a.PackageID == packageID && a.Commit == commit && a.SHA256 == sha {
-			return snapshotFromState(a), nil
-		}
+	if check != sha {
+		return Snapshot{}, errors.New("immutable snapshot integrity failure")
 	}
+
 	id, err := managementstate.NewSourceSnapshotID()
 	if err != nil {
 		return Snapshot{}, err
 	}
-	artifact := managementstate.SourceArtifact{ID: id, Kind: kind, PackageID: packageID, PackagePath: packagePath, Version: version, Commit: commit, SHA256: sha, StorageRef: filepath.ToSlash(filepath.Join("snapshots", "sha256", sha))}
-	if err := l.state.Change(ctx, func(c *managementstate.Change) error { return c.RegisterSourceArtifact(artifact) }); err != nil {
+	artifact := managementstate.SourceArtifact{
+		ID: id, Kind: kind, PackageID: packageID, PackagePath: packagePath,
+		Version: version, Commit: commit, SHA256: sha,
+		StorageRef: filepath.ToSlash(filepath.Join("snapshots", "sha256", sha)),
+	}
+	if err := l.state.Change(ctx, func(c *managementstate.Change) error {
+		return c.RegisterSourceArtifact(artifact)
+	}); err != nil {
 		return Snapshot{}, err
 	}
 	return snapshotFromState(artifact), nil
+}
+
+func (l *Library) verifySnapshot(a managementstate.SourceArtifact) error {
+	actual, err := sourcehash.TreeSHA256(l.snapshotPath(a.SHA256))
+	if err != nil {
+		return fmt.Errorf("verify immutable source snapshot %s: %w", a.ID, err)
+	}
+	if actual != a.SHA256 {
+		return fmt.Errorf("immutable source snapshot %s changed: expected=%s actual=%s", a.ID, a.SHA256, actual)
+	}
+	return nil
 }
 
 func (l *Library) createWorkspaceFromPath(ctx context.Context, base managementstate.SourceArtifact, src string) (Workspace, error) {
@@ -395,14 +435,21 @@ func (l *Library) createWorkspaceFromPath(ctx context.Context, base managementst
 	}
 	sha, err := sourcehash.TreeSHA256(dst)
 	if err != nil {
-		return Workspace{}, err
-	}
-	v := managementstate.SourceWorkspace{ID: id, Kind: base.Kind, PackageID: base.PackageID, PackagePath: base.PackagePath, BaseSourceID: base.ID, BaseCommit: base.Commit, CurrentSHA256: sha, StorageRef: filepath.ToSlash(filepath.Join("workspaces", string(id)))}
-	if err := l.state.Change(ctx, func(c *managementstate.Change) error { return c.CreateSourceWorkspace(v) }); err != nil {
 		_ = os.RemoveAll(dst)
 		return Workspace{}, err
 	}
-	return workspaceFromState(v), nil
+	value := managementstate.SourceWorkspace{
+		ID: id, Kind: base.Kind, PackageID: base.PackageID, PackagePath: base.PackagePath,
+		BaseSourceID: base.ID, BaseCommit: base.Commit, CurrentSHA256: sha,
+		StorageRef: filepath.ToSlash(filepath.Join("workspaces", string(id))),
+	}
+	if err := l.state.Change(ctx, func(c *managementstate.Change) error {
+		return c.CreateSourceWorkspace(value)
+	}); err != nil {
+		_ = os.RemoveAll(dst)
+		return Workspace{}, err
+	}
+	return workspaceFromState(value), nil
 }
 
 func (l *Library) config(ctx context.Context) (managementstate.CustomModuleGithubConfig, error) {
@@ -415,48 +462,76 @@ func (l *Library) config(ctx context.Context) (managementstate.CustomModuleGithu
 	}
 	return *s.CustomModuleGithub, nil
 }
+
 func (l *Library) artifact(ctx context.Context, id managementstate.SourceSnapshotID) (managementstate.SourceArtifact, error) {
 	s, err := l.state.Sources(ctx)
 	if err != nil {
 		return managementstate.SourceArtifact{}, err
 	}
-	for _, v := range s.Artifacts {
-		if v.ID == id {
-			return v, nil
+	for _, value := range s.Artifacts {
+		if value.ID == id {
+			if err := l.verifySnapshot(value); err != nil {
+				return managementstate.SourceArtifact{}, err
+			}
+			return value, nil
 		}
 	}
 	return managementstate.SourceArtifact{}, fmt.Errorf("source snapshot %s does not exist", id)
 }
+
 func (l *Library) workspace(ctx context.Context, id managementstate.SourceWorkspaceID) (managementstate.SourceWorkspace, error) {
 	s, err := l.state.Sources(ctx)
 	if err != nil {
 		return managementstate.SourceWorkspace{}, err
 	}
-	for _, v := range s.Workspaces {
-		if v.ID == id {
-			return v, nil
+	for _, value := range s.Workspaces {
+		if value.ID == id {
+			return value, nil
 		}
 	}
 	return managementstate.SourceWorkspace{}, fmt.Errorf("source workspace %s does not exist", id)
 }
-func (l *Library) snapshotPath(sha string) string { return filepath.Join(l.root, "snapshots", "sha256", sha) }
+
+func (l *Library) snapshotPath(sha string) string {
+	return filepath.Join(l.root, "snapshots", "sha256", sha)
+}
+
 func (l *Library) workspacePath(w managementstate.SourceWorkspace) string {
 	return filepath.Join(l.root, filepath.FromSlash(w.StorageRef))
 }
-func snapshotFromState(v managementstate.SourceArtifact) Snapshot {
-	return Snapshot{ID: v.ID, Kind: v.Kind, PackageID: v.PackageID, PackagePath: v.PackagePath, Version: v.Version, Commit: v.Commit, SHA256: v.SHA256}
+
+func snapshotFromState(value managementstate.SourceArtifact) Snapshot {
+	return Snapshot{
+		ID: value.ID, Kind: value.Kind, PackageID: value.PackageID,
+		PackagePath: value.PackagePath, Version: value.Version,
+		Commit: value.Commit, SHA256: value.SHA256,
+	}
 }
-func workspaceFromState(v managementstate.SourceWorkspace) Workspace {
-	return Workspace{ID: v.ID, Kind: v.Kind, PackageID: v.PackageID, PackagePath: v.PackagePath, BaseSnapshotID: v.BaseSourceID, BaseCommit: v.BaseCommit, SHA256: v.CurrentSHA256, SynchronizedCommit: v.SynchronizedCommit}
+
+func workspaceFromState(value managementstate.SourceWorkspace) Workspace {
+	return Workspace{
+		ID: value.ID, Kind: value.Kind, PackageID: value.PackageID,
+		PackagePath: value.PackagePath, BaseSnapshotID: value.BaseSourceID,
+		BaseCommit: value.BaseCommit, SHA256: value.CurrentSHA256,
+		SynchronizedCommit: value.SynchronizedCommit,
+	}
+}
+
+func validateRelativeEditPath(value string) error {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
+	if value == "" || clean == "." || clean != value || filepath.IsAbs(filepath.FromSlash(value)) || value == ".." || strings.HasPrefix(value, "../") || strings.HasPrefix(value, ".git/") || value == ".git" {
+		return fmt.Errorf("workspace path %q must be a clean relative non-git path", value)
+	}
+	return nil
 }
 
 func copyTree(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
-	return filepath.WalkDir(src, func(path string, de fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	return filepath.WalkDir(src, func(path string, de fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
 		if path == src {
 			return nil
@@ -487,46 +562,56 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer in.Close()
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
 		if err != nil {
+			_ = in.Close()
 			return err
 		}
 		_, copyErr := io.Copy(out, in)
-		closeErr := out.Close()
+		inErr := in.Close()
+		outErr := out.Close()
 		if copyErr != nil {
 			return copyErr
 		}
-		return closeErr
+		if inErr != nil {
+			return inErr
+		}
+		return outErr
 	})
 }
 
 func diffTrees(before, after string) (Diff, error) {
-	b, err := fileDigests(before)
+	beforeDigests, err := fileDigests(before)
 	if err != nil {
 		return Diff{}, err
 	}
-	a, err := fileDigests(after)
+	afterDigests, err := fileDigests(after)
 	if err != nil {
 		return Diff{}, err
 	}
 	keys := map[string]struct{}{}
-	for k := range b { keys[k] = struct{}{} }
-	for k := range a { keys[k] = struct{}{} }
+	for key := range beforeDigests {
+		keys[key] = struct{}{}
+	}
+	for key := range afterDigests {
+		keys[key] = struct{}{}
+	}
 	paths := make([]string, 0, len(keys))
-	for k := range keys { paths = append(paths, k) }
+	for key := range keys {
+		paths = append(paths, key)
+	}
 	sort.Strings(paths)
 	out := Diff{Changes: []FileChange{}}
-	for _, p := range paths {
-		bv, bok := b[p]
-		av, aok := a[p]
+	for _, path := range paths {
+		beforeSHA, beforeOK := beforeDigests[path]
+		afterSHA, afterOK := afterDigests[path]
 		switch {
-		case !bok && aok:
-			out.Changes = append(out.Changes, FileChange{Path: p, Kind: Added, AfterSHA: av})
-		case bok && !aok:
-			out.Changes = append(out.Changes, FileChange{Path: p, Kind: Deleted, BeforeSHA: bv})
-		case bok && aok && bv != av:
-			out.Changes = append(out.Changes, FileChange{Path: p, Kind: Modified, BeforeSHA: bv, AfterSHA: av})
+		case !beforeOK && afterOK:
+			out.Changes = append(out.Changes, FileChange{Path: path, Kind: Added, AfterSHA: afterSHA})
+		case beforeOK && !afterOK:
+			out.Changes = append(out.Changes, FileChange{Path: path, Kind: Deleted, BeforeSHA: beforeSHA})
+		case beforeOK && afterOK && beforeSHA != afterSHA:
+			out.Changes = append(out.Changes, FileChange{Path: path, Kind: Modified, BeforeSHA: beforeSHA, AfterSHA: afterSHA})
 		}
 	}
 	return out, nil
@@ -534,23 +619,43 @@ func diffTrees(before, after string) (Diff, error) {
 
 func fileDigests(root string) (map[string]string, error) {
 	out := map[string]string{}
-	err := filepath.WalkDir(root, func(path string, de fs.DirEntry, err error) error {
-		if err != nil { return err }
-		if path == root || de.IsDir() { return nil }
+	err := filepath.WalkDir(root, func(path string, de fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
 		rel, err := filepath.Rel(root, path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, ".git/") || rel == ".git" { return nil }
+		if !sourcehash.RelevantPath(rel, de.IsDir()) {
+			if de.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if de.IsDir() {
+			return nil
+		}
 		if de.Type()&fs.ModeSymlink != 0 {
 			target, err := os.Readlink(path)
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			sum := sha256.Sum256([]byte("symlink\x00" + target))
 			out[rel] = hex.EncodeToString(sum[:])
 			return nil
 		}
-		if !de.Type().IsRegular() { return nil }
+		if !de.Type().IsRegular() {
+			return nil
+		}
 		data, err := os.ReadFile(path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		sum := sha256.Sum256(data)
 		out[rel] = hex.EncodeToString(sum[:])
 		return nil
