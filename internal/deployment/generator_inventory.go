@@ -10,6 +10,13 @@ func generateInventory(mods []compiledModule, links []LinkNetwork) ([]byte, erro
 		Name  string `json:"name"`
 		Scope string `json:"scope"`
 	}
+	type healthcheckRef struct {
+		Type      string   `json:"type"`
+		Container string   `json:"container"`
+		URL       string   `json:"url,omitempty"`
+		Port      int      `json:"port,omitempty"`
+		Command   []string `json:"command,omitempty"`
+	}
 	type invModule struct {
 		InstanceID       string            `json:"instance_id"`
 		ModuleID         string            `json:"module_id"`
@@ -21,6 +28,7 @@ func generateInventory(mods []compiledModule, links []LinkNetwork) ([]byte, erro
 		Containers       []string          `json:"containers"`
 		Networks         []string          `json:"networks"`
 		ManagedArtifacts []string          `json:"managed_artifacts"`
+		Healthcheck      healthcheckRef    `json:"healthcheck"`
 	}
 	doc := struct {
 		Modules []invModule `json:"modules"`
@@ -30,6 +38,10 @@ func generateInventory(mods []compiledModule, links []LinkNetwork) ([]byte, erro
 		im := invModule{
 			InstanceID: m.Desired.InstanceID, ModuleID: m.Contract.ID, PackageID: m.Desired.Source.PackageID,
 			Version: m.Contract.Version, PackageSHA256: m.Desired.Source.PackageSHA256, ImageDigests: m.Images,
+			Healthcheck: healthcheckRef{
+				Type: m.Contract.Healthcheck.Type, Container: m.Contract.Healthcheck.Container, URL: m.Contract.Healthcheck.URL,
+				Port: m.Contract.Healthcheck.Port, Command: append([]string(nil), m.Contract.Healthcheck.Command...),
+			},
 		}
 		for _, c := range m.Contract.Containers {
 			name := prefix + "-" + c.ID

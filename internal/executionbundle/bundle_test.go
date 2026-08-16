@@ -125,3 +125,33 @@ func TestHistoricalBundleCannotBeOverwritten(t *testing.T) {
 		t.Fatal("expected immutable-store conflict")
 	}
 }
+
+func TestVerifyReadsManifestFromHashedBundleBytes(t *testing.T) {
+	a, _ := NewAssembler(t.TempDir())
+	bundle, err := a.Assemble(baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Manifest.Runner.Path = "actions/validate.sh"
+	bundle.Manifest.Runner.SHA256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+	manifest, err := Verify(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Runner.Path != "runtime/runner.py" || manifest.Runner.SHA256 == bundle.Manifest.Runner.SHA256 {
+		t.Fatalf("verify trusted mutable Bundle.Manifest instead of bundle bytes: %#v", manifest.Runner)
+	}
+}
+
+func TestVerifyRejectsTamperedBundleBytes(t *testing.T) {
+	a, _ := NewAssembler(t.TempDir())
+	bundle, err := a.Assemble(baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Bytes[len(bundle.Bytes)/2] ^= 0x01
+	if _, err := Verify(bundle); err == nil {
+		t.Fatal("expected tampered bundle rejection")
+	}
+}

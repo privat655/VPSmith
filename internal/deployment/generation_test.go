@@ -158,3 +158,30 @@ func TestPrepareDiffIncludesRuntimeObjects(t *testing.T) {
 		t.Fatalf("runtime diff incomplete: %#v", p.ExpectedChanges)
 	}
 }
+
+func TestPrepareInventoryCarriesDeclarativePrimaryHealthcheck(t *testing.T) {
+	req := baseRequest()
+	c := newCompiler(t, "docker.io/example/n8n:2.0.0")
+	prepared, err := c.Prepare(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory []byte
+	for _, artifact := range prepared.Artifacts {
+		if artifact.TargetPath == "/var/lib/vpsmith/inventory/modules.json" {
+			inventory = artifact.Data
+			break
+		}
+	}
+	if len(inventory) == 0 {
+		t.Fatal("module inventory artifact missing")
+	}
+	for _, want := range [][]byte{
+		[]byte(`"healthcheck":{"type":"tcp","container":"app","port":8080}`),
+		[]byte(`"instance_id":"n8n-1"`),
+	} {
+		if !bytes.Contains(inventory, want) {
+			t.Fatalf("module inventory missing %s: %s", want, inventory)
+		}
+	}
+}
