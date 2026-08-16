@@ -7,12 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/privat655/VPSmith/internal/sourcehash"
 )
 
 const manifestName = "manifest.json"
@@ -39,15 +38,11 @@ type Source struct {
 	SHA256  string `json:"sha256"`
 }
 
-// Load reads the release manifest and verifies every embedded source tree against
-// its declared SHA-256 identity before returning it to callers.
 func Load(root string) (Info, error) {
-	manifestPath := filepath.Join(root, manifestName)
-	data, err := os.ReadFile(manifestPath)
+	data, err := os.ReadFile(filepath.Join(root, manifestName))
 	if err != nil {
 		return Info{}, fmt.Errorf("read release manifest: %w", err)
 	}
-
 	var info Info
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
@@ -60,17 +55,16 @@ func Load(root string) (Info, error) {
 	if err := validateManifest(info); err != nil {
 		return Info{}, err
 	}
-
 	for name, source := range map[string]Source{
 		"cloud-init": info.Embedded.CloudInit,
 		"core":       info.Embedded.Core,
 		"n8n":        info.Embedded.N8N,
 	} {
-		sourcePath, err := sourceRoot(root, source.Path)
+		path, err := sourceRoot(root, source.Path)
 		if err != nil {
 			return Info{}, fmt.Errorf("%s embedded source path: %w", name, err)
 		}
-		actual, err := TreeSHA256(sourcePath)
+		actual, err := TreeSHA256(path)
 		if err != nil {
 			return Info{}, fmt.Errorf("hash %s embedded source: %w", name, err)
 		}
@@ -78,8 +72,34 @@ func Load(root string) (Info, error) {
 			return Info{}, fmt.Errorf("%s embedded source sha256 mismatch: manifest=%s actual=%s", name, source.SHA256, actual)
 		}
 	}
-
 	return info, nil
+}
+
+func Refresh(root string, info Info) (Info, error) {
+	if err := validateManifestMetadata(info); err != nil {
+		return Info{}, err
+	}
+	for name, source := range map[string]*Source{
+		"cloud-init": &info.Embedded.CloudInit,
+		"core":       &info.Embedded.Core,
+		"n8n":        &info.Embedded.N8N,
+	} {
+		path, err := sourceRoot(root, source.Path)
+		if err != nil {
+			return Info{}, fmt.Errorf("%s embedded source path: %w", name, err)
+		}
+		digest, err := TreeSHA256(path)
+		if err != nil {
+			return Info{}, fmt.Errorf("hash %s embedded source: %w", name, err)
+		}
+		source.SHA256 = digest
+	}
+	return info, nil
+}
+
+// TreeSHA256 is the release-tooling entry point into the single canonical VPSmith source hashing pipeline.
+func TreeSHA256(root string) (string, error) {
+	return sourcehash.TreeSHA256(root)
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {
@@ -91,31 +111,6 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 		return fmt.Errorf("decode trailing release manifest data: %w", err)
 	}
 	return nil
-}
-
-// Refresh recalculates the SHA-256 identities of the three embedded source
-// trees while preserving their declared versions and paths. It is used only by
-// the external build/release tooling that prepares the image inputs.
-func Refresh(root string, info Info) (Info, error) {
-	if err := validateManifestMetadata(info); err != nil {
-		return Info{}, err
-	}
-	for name, source := range map[string]*Source{
-		"cloud-init": &info.Embedded.CloudInit,
-		"core":       &info.Embedded.Core,
-		"n8n":        &info.Embedded.N8N,
-	} {
-		sourcePath, err := sourceRoot(root, source.Path)
-		if err != nil {
-			return Info{}, fmt.Errorf("%s embedded source path: %w", name, err)
-		}
-		digest, err := TreeSHA256(sourcePath)
-		if err != nil {
-			return Info{}, fmt.Errorf("hash %s embedded source: %w", name, err)
-		}
-		source.SHA256 = digest
-	}
-	return info, nil
 }
 
 func validateManifest(info Info) error {
@@ -141,7 +136,6 @@ func validateManifestMetadata(info Info) error {
 	if strings.TrimSpace(info.Studio.Version) == "" {
 		return errors.New("studio version is required")
 	}
-
 	for name, source := range map[string]Source{
 		"cloud-init": info.Embedded.CloudInit,
 		"core":       info.Embedded.Core,
@@ -204,142 +198,4 @@ func validateSHA256(value string) error {
 		return errors.New("must be lowercase hexadecimal")
 	}
 	return nil
-}
-
-// TreeSHA256 calculates the canonical identity of a source tree. Directory
-// entries are omitted; regular files and symlinks are sorted by POSIX path.
-// Each regular file contributes its path, Unix permissions, size, and content SHA-256.
-// Symlinks contribute their path and target, are never followed for hashing, and
-// must resolve to an existing entry inside the same source tree.
-func TreeSHA256(root string) (string, error) {
-	rootInfo, err := os.Lstat(root)
-	if err != nil {
-		return "", err
-	}
-	if rootInfo.Mode()&fs.ModeSymlink != 0 {
-		return "", fmt.Errorf("%s must not be a symlink", root)
-	}
-	if !rootInfo.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", root)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve source root: %w", err)
-	}
-
-	type entry struct {
-		path   string
-		mode   fs.FileMode
-		size   int64
-		target string
-		digest string
-	}
-	var entries []entry
-
-	err = filepath.WalkDir(root, func(path string, dirEntry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == root || dirEntry.IsDir() {
-			return nil
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		relative = filepath.ToSlash(relative)
-
-		info, err := dirEntry.Info()
-		if err != nil {
-			return err
-		}
-		switch {
-		case info.Mode().IsRegular():
-			digest, err := fileSHA256(path)
-			if err != nil {
-				return err
-			}
-			entries = append(entries, entry{path: relative, mode: info.Mode(), size: info.Size(), digest: digest})
-		case info.Mode()&fs.ModeSymlink != 0:
-			target, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			if err := validateTreeSymlink(resolvedRoot, path, target); err != nil {
-				return fmt.Errorf("unsafe source symlink %s: %w", relative, err)
-			}
-			entries = append(entries, entry{path: relative, mode: info.Mode(), target: filepath.ToSlash(target)})
-		default:
-			return fmt.Errorf("unsupported source entry %s with mode %s", relative, info.Mode())
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	if len(entries) == 0 {
-		return "", errors.New("source tree contains no files")
-	}
-
-	sort.Slice(entries, func(i, j int) bool { return entries[i].path < entries[j].path })
-	hash := sha256.New()
-	for _, current := range entries {
-		if current.mode&fs.ModeSymlink != 0 {
-			writeCanonicalField(hash, "symlink")
-			writeCanonicalField(hash, current.path)
-			writeCanonicalField(hash, current.target)
-			continue
-		}
-		writeCanonicalField(hash, "file")
-		writeCanonicalField(hash, current.path)
-		writeCanonicalField(hash, fmt.Sprintf("%04o", current.mode.Perm()))
-		writeCanonicalField(hash, strconv.FormatInt(current.size, 10))
-		writeCanonicalField(hash, current.digest)
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func validateTreeSymlink(resolvedRoot, path, target string) error {
-	if filepath.IsAbs(target) {
-		return errors.New("target must be relative")
-	}
-	candidate := filepath.Clean(filepath.Join(filepath.Dir(path), target))
-	lexicalRelative, err := filepath.Rel(resolvedRoot, candidate)
-	if err != nil {
-		return err
-	}
-	if pathEscapesRoot(lexicalRelative) {
-		return errors.New("target escapes source tree")
-	}
-	resolvedTarget, err := filepath.EvalSymlinks(candidate)
-	if err != nil {
-		return fmt.Errorf("resolve target: %w", err)
-	}
-	resolvedRelative, err := filepath.Rel(resolvedRoot, resolvedTarget)
-	if err != nil {
-		return err
-	}
-	if pathEscapesRoot(resolvedRelative) {
-		return errors.New("target resolves outside source tree")
-	}
-	return nil
-}
-
-func writeCanonicalField(writer io.Writer, value string) {
-	_, _ = io.WriteString(writer, value)
-	_, _ = writer.Write([]byte{0})
-}
-
-func fileSHA256(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }

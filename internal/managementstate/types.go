@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 type TargetID string
 type CoreSourceID string

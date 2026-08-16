@@ -22,22 +22,48 @@ RUN test -n "$VERSION" \
        -o /out/vpsmith-studio \
        ./cmd/vpsmith-studio
 
+# Resolve the exact Git runtime payload from the pinned Debian snapshot, but do
+# not install it into the final image. Package maintainer scripts create logs
+# and caches that contain per-build state and would make otherwise identical
+# images differ. Extracting the immutable .deb payloads gives the runtime the
+# same Git files and libraries without carrying package-manager side effects.
+FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS git-runtime
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+RUN printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260713T000000Z bookworm main' \
+      > /etc/apt/sources.list \
+    && rm -f /etc/apt/sources.list.d/* \
+    && apt-get update \
+    && apt-get install -y --download-only --no-install-recommends git=1:2.39.5-0+deb12u3 \
+    && mkdir -p /git-root \
+    && for package in /var/cache/apt/archives/*.deb; do dpkg-deb -x "$package" /git-root; done \
+    && if [ -d /git-root/lib ]; then mkdir -p /git-root/usr/lib; cp -a /git-root/lib/. /git-root/usr/lib/; rm -rf /git-root/lib; fi \
+    && test -x /git-root/usr/bin/git
+
 FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 ARG VERSION
 ARG REVISION
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=git-runtime /git-root/usr/ /usr/
 
 RUN mkdir -p \
       /var/lib/vpsmith/state \
       /var/lib/vpsmith/sources \
       /var/lib/vpsmith/backups \
       /usr/share/vpsmith/embedded \
+      /usr/local/libexec \
     && chown -R 10001:10001 /var/lib/vpsmith
 
 COPY --from=build --chown=10001:10001 /out/vpsmith-studio /usr/local/bin/vpsmith-studio
 COPY --chown=0:0 embedded/ /usr/share/vpsmith/embedded/
+COPY --chmod=0555 --chown=0:0 build/vpsmith-git-askpass.sh /usr/local/libexec/vpsmith-git-askpass
 
-RUN /usr/local/bin/vpsmith-studio version >/dev/null
+RUN git --version | grep -F 'git version 2.39.5' \
+    && /usr/local/bin/vpsmith-studio version >/dev/null
 
 LABEL org.opencontainers.image.title="VPSmith Platform" \
       org.opencontainers.image.version="$VERSION" \

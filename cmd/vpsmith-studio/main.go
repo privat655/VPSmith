@@ -17,6 +17,7 @@ import (
 
 	"github.com/privat655/VPSmith/internal/managementstate"
 	"github.com/privat655/VPSmith/internal/releaseinfo"
+	"github.com/privat655/VPSmith/internal/sourcelibrary"
 	"github.com/privat655/VPSmith/internal/studio"
 )
 
@@ -48,7 +49,6 @@ func run(args []string) error {
 	if len(args) > 1 {
 		return fmt.Errorf("unexpected arguments: %v", args[1:])
 	}
-
 	switch command {
 	case "serve":
 		return serve()
@@ -72,10 +72,7 @@ func serve() error {
 	if err != nil {
 		return err
 	}
-	for _, mount := range []struct {
-		name string
-		path string
-	}{
+	for _, mount := range []struct{ name, path string }{
 		{name: "state", path: stateDir},
 		{name: "sources", path: sourcesDir},
 		{name: "backups", path: backupsDir},
@@ -95,6 +92,14 @@ func serve() error {
 		}
 	}()
 
+	sources, err := sourcelibrary.New(sourcesDir, embeddedRoot, state, sourcelibrary.NewGithubRemote())
+	if err != nil {
+		return fmt.Errorf("open canonical source library: %w", err)
+	}
+	if _, err := sources.ImportEmbedded(context.Background()); err != nil {
+		return fmt.Errorf("import embedded source snapshots: %w", err)
+	}
+
 	listener, err := net.Listen("tcp4", listenAddress)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", listenAddress, err)
@@ -110,14 +115,10 @@ func serve() error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
-
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- server.Serve(listener)
-	}()
-
+	go func() { serveErr <- server.Serve(listener) }()
 	log.Printf("VPSmith Studio %s listening on http://%s", identity.Version, listenAddress)
 	select {
 	case err := <-serveErr:
@@ -143,12 +144,7 @@ func loadIdentity() (studio.BuildIdentity, error) {
 	if info.Studio.Version != version {
 		return studio.BuildIdentity{}, fmt.Errorf("studio version mismatch: binary=%s manifest=%s", version, info.Studio.Version)
 	}
-	return studio.BuildIdentity{
-		Version:  version,
-		Revision: revision,
-		BuiltAt:  buildTime(sourceDateEpoch),
-		Embedded: info.Embedded,
-	}, nil
+	return studio.BuildIdentity{Version: version, Revision: revision, BuiltAt: buildTime(sourceDateEpoch), Embedded: info.Embedded}, nil
 }
 
 func buildTime(epoch string) string {
