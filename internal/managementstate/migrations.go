@@ -103,7 +103,8 @@ CREATE TABLE module_sources (
   base_commit TEXT NOT NULL DEFAULT '',
   version TEXT NOT NULL,
   package_sha256 TEXT NOT NULL,
-  PRIMARY KEY(package_id, role, target_id)
+  PRIMARY KEY(package_id, role, target_id),
+  UNIQUE(package_id)
 ) STRICT;
 CREATE TABLE secrets (
   id TEXT PRIMARY KEY,
