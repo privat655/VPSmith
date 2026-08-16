@@ -22,14 +22,13 @@ RUN test -n "$VERSION" \
        -o /out/vpsmith-studio \
        ./cmd/vpsmith-studio
 
-FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+# Resolve the exact Git runtime payload from the pinned Debian snapshot, but do
+# not install it into the final image. Package maintainer scripts create logs
+# and caches that contain per-build state and would make otherwise identical
+# images differ. Extracting the immutable .deb payloads gives the runtime the
+# same Git files and libraries without carrying package-manager side effects.
+FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS git-runtime
 
-ARG VERSION
-ARG REVISION
-
-# The slim runtime has no CA bundle before apt is usable. Bootstrap exactly the
-# Debian CA bundle from the already pinned bookworm builder, then refresh it
-# from the pinned Debian snapshot together with Git.
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 RUN printf '%s\n' \
@@ -37,9 +36,20 @@ RUN printf '%s\n' \
       > /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/* \
     && apt-get update \
-    && apt-get install -y --no-install-recommends git=1:2.39.5-0+deb12u3 ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p \
+    && apt-get install -y --download-only --no-install-recommends git=1:2.39.5-0+deb12u3 \
+    && mkdir -p /git-root \
+    && for package in /var/cache/apt/archives/*.deb; do dpkg-deb -x "$package" /git-root; done \
+    && test -x /git-root/usr/bin/git
+
+FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+
+ARG VERSION
+ARG REVISION
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=git-runtime /git-root/ /
+
+RUN mkdir -p \
       /var/lib/vpsmith/state \
       /var/lib/vpsmith/sources \
       /var/lib/vpsmith/backups \
