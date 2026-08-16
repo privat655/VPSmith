@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "studio": {
+    "version": "0.1.0-dev.1"
+  },
+  "embedded": {
+    "cloud_init": {
+      "version": "0.1.0-scaffold.1",
+      "path": "cloud-init",
+      "sha256": "5861bcae8e74cefc2840e3cc25f2f2fed99cabc4da695386edcfccae780938ba"
+    },
+    "core": {
+      "version": "0.1.0-scaffold.1",
+      "path": "core",
+      "sha256": "1b827688232a6bc5e3052110c8fe67a54fb2a1029bd8a6e31178d8c81580783c"
+    },
+    "n8n": {
+      "version": "0.1.0-scaffold.1",
+      "path": "modules/n8n",
+      "sha256": "29ec33b60baf422d9dd392f1c2932786c91d3a51fb8e23a6d2d586a2d51edd1d"
+    }
+  }
+}

@@ -1,0 +1,56 @@
+name: verify
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify Go code with pinned toolchain image
+        run: |
+          docker run --rm \
+            --volume "$PWD:/src" \
+            --workdir /src \
+            golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 \
+            sh -eu -c 'go version && make verify-go'
+
+  containers:
+    name: containers (Linux/amd64 reference)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify shell scripts parse
+        run: sh -n build/*.sh
+
+      - name: Verify Docker runtime contract
+        run: ./build/verify-container.sh docker
+
+      - name: Verify Docker reproducibility
+        run: ./build/verify-reproducible-image.sh docker
+
+      - name: Verify Podman is available
+        run: podman --version
+
+      - name: Verify Podman runtime contract
+        run: ./build/verify-container.sh podman
+
+      - name: Verify Podman reproducibility
+        run: ./build/verify-reproducible-image.sh podman
