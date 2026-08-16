@@ -60,9 +60,10 @@ type NetworkObservedState struct {
 }
 
 type ServiceObservedState struct {
-	Present     bool `json:"present"`
-	Running     bool `json:"running"`
-	ConfigValid bool `json:"config_valid,omitempty"`
+	Present       bool `json:"present"`
+	Running       bool `json:"running"`
+	ConfigChecked bool `json:"config_checked,omitempty"`
+	ConfigValid   bool `json:"config_valid,omitempty"`
 }
 
 type ManagedArtifactObservedState struct {
