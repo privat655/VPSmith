@@ -12,7 +12,10 @@ type migration struct {
 	up      func(context.Context, *sql.Conn) error
 }
 
-var migrations = []migration{{version: 1, up: migrateV1}}
+var migrations = []migration{
+	{version: 1, up: migrateV1},
+	{version: 2, up: migrateV2},
+}
 
 func migrate(ctx context.Context, conn *sql.Conn) error { return migrateWith(ctx, conn, migrations) }
 
@@ -103,7 +106,7 @@ CREATE TABLE module_sources (
   base_commit TEXT NOT NULL DEFAULT '',
   version TEXT NOT NULL,
   package_sha256 TEXT NOT NULL,
-  PRIMARY KEY(package_id, role, target_id),
+  PRIMARY KEY(package_id, role,target_id),
   UNIQUE(package_id)
 ) STRICT;
 CREATE TABLE secrets (
