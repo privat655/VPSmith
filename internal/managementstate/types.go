@@ -22,14 +22,29 @@ type ExecutionBundleID string
 type ExecutionRecordID string
 type BackupArtifactID string
 
-func NewTargetID() (TargetID, error)                         { v, e := newID("target"); return TargetID(v), e }
-func NewCoreSourceID() (CoreSourceID, error)                 { v, e := newID("core-src"); return CoreSourceID(v), e }
-func NewModulePackageID() (ModulePackageID, error)           { v, e := newID("module-pkg"); return ModulePackageID(v), e }
-func NewModuleInstanceID() (ModuleInstanceID, error)         { v, e := newID("module-inst"); return ModuleInstanceID(v), e }
-func NewSecretID() (SecretID, error)                         { v, e := newID("secret"); return SecretID(v), e }
-func NewExecutionBundleID() (ExecutionBundleID, error)       { v, e := newID("bundle"); return ExecutionBundleID(v), e }
-func NewExecutionRecordID() (ExecutionRecordID, error)       { v, e := newID("execution"); return ExecutionRecordID(v), e }
-func NewBackupArtifactID() (BackupArtifactID, error)         { v, e := newID("backup"); return BackupArtifactID(v), e }
+func NewTargetID() (TargetID, error)         { v, e := newID("target"); return TargetID(v), e }
+func NewCoreSourceID() (CoreSourceID, error) { v, e := newID("core-src"); return CoreSourceID(v), e }
+func NewModulePackageID() (ModulePackageID, error) {
+	v, e := newID("module-pkg")
+	return ModulePackageID(v), e
+}
+func NewModuleInstanceID() (ModuleInstanceID, error) {
+	v, e := newID("module-inst")
+	return ModuleInstanceID(v), e
+}
+func NewSecretID() (SecretID, error) { v, e := newID("secret"); return SecretID(v), e }
+func NewExecutionBundleID() (ExecutionBundleID, error) {
+	v, e := newID("bundle")
+	return ExecutionBundleID(v), e
+}
+func NewExecutionRecordID() (ExecutionRecordID, error) {
+	v, e := newID("execution")
+	return ExecutionRecordID(v), e
+}
+func NewBackupArtifactID() (BackupArtifactID, error) {
+	v, e := newID("backup")
+	return BackupArtifactID(v), e
+}
 
 func newID(prefix string) (string, error) {
 	var raw [16]byte
@@ -56,15 +71,15 @@ const (
 )
 
 type Target struct {
-	ID                   TargetID    `json:"id"`
-	Address              string      `json:"address"`
-	SSHUser              string      `json:"ssh_user"`
-	SSHIdentitySecretID  SecretID    `json:"ssh_identity_secret_id,omitempty"`
-	SSHHostKey           string      `json:"ssh_host_key,omitempty"`
-	SSHHostFingerprint   string      `json:"ssh_host_fingerprint,omitempty"`
-	SSHTrust             TrustStatus `json:"ssh_trust"`
-	Desired              DesiredState `json:"desired"`
-	Observed             ObservedState `json:"observed"`
+	ID                  TargetID      `json:"id"`
+	Address             string        `json:"address"`
+	SSHUser             string        `json:"ssh_user"`
+	SSHIdentitySecretID SecretID      `json:"ssh_identity_secret_id,omitempty"`
+	SSHHostKey          string        `json:"ssh_host_key,omitempty"`
+	SSHHostFingerprint  string        `json:"ssh_host_fingerprint,omitempty"`
+	SSHTrust            TrustStatus   `json:"ssh_trust"`
+	Desired             DesiredState  `json:"desired"`
+	Observed            ObservedState `json:"observed"`
 }
 
 type CloudInitDesiredState struct {
@@ -73,8 +88,8 @@ type CloudInitDesiredState struct {
 }
 
 type CoreDesiredState struct {
-	SourceID CoreSourceID `json:"source_id,omitempty"`
-	Version  string       `json:"version,omitempty"`
+	SourceID CoreSourceID     `json:"source_id,omitempty"`
+	Version  string           `json:"version,omitempty"`
 	Swap     SwapDesiredState `json:"swap"`
 }
 
@@ -97,11 +112,11 @@ type ModuleDependency struct {
 }
 
 type ModuleDesiredState struct {
-	InstanceID   ModuleInstanceID  `json:"instance_id"`
-	PackageID    ModulePackageID   `json:"package_id"`
-	Version      string            `json:"version"`
-	SecretIDs    []SecretID        `json:"secret_ids,omitempty"`
-	Resources    ResourceOverrides `json:"resources,omitempty"`
+	InstanceID   ModuleInstanceID   `json:"instance_id"`
+	PackageID    ModulePackageID    `json:"package_id"`
+	Version      string             `json:"version"`
+	SecretIDs    []SecretID         `json:"secret_ids,omitempty"`
+	Resources    ResourceOverrides  `json:"resources,omitempty"`
 	Dependencies []ModuleDependency `json:"dependencies,omitempty"`
 }
 
@@ -132,10 +147,10 @@ type ModuleObservedState struct {
 }
 
 type ObservedState struct {
-	ObservedAt string                   `json:"observed_at,omitempty"`
-	CloudInit  CloudInitObservedState   `json:"cloud_init"`
-	Core       CoreObservedState        `json:"core"`
-	Modules    []ModuleObservedState    `json:"modules,omitempty"`
+	ObservedAt string                 `json:"observed_at,omitempty"`
+	CloudInit  CloudInitObservedState `json:"cloud_init"`
+	Core       CoreObservedState      `json:"core"`
+	Modules    []ModuleObservedState  `json:"modules,omitempty"`
 }
 
 type CoreSourceRole string
@@ -164,16 +179,16 @@ const (
 )
 
 type ModuleSource struct {
-	PackageID    ModulePackageID `json:"package_id"`
-	Role         ModuleSourceRole `json:"role"`
-	TargetID     TargetID         `json:"target_id,omitempty"`
-	Owner        string           `json:"owner,omitempty"`
-	Repository   string           `json:"repository,omitempty"`
-	Ref          string           `json:"ref,omitempty"`
-	Commit       string           `json:"commit,omitempty"`
-	BaseCommit   string           `json:"base_commit,omitempty"`
-	Version      string           `json:"version"`
-	PackageSHA256 string          `json:"package_sha256"`
+	PackageID     ModulePackageID  `json:"package_id"`
+	Role          ModuleSourceRole `json:"role"`
+	TargetID      TargetID         `json:"target_id,omitempty"`
+	Owner         string           `json:"owner,omitempty"`
+	Repository    string           `json:"repository,omitempty"`
+	Ref           string           `json:"ref,omitempty"`
+	Commit        string           `json:"commit,omitempty"`
+	BaseCommit    string           `json:"base_commit,omitempty"`
+	Version       string           `json:"version"`
+	PackageSHA256 string           `json:"package_sha256"`
 }
 
 type SecretMetadata struct {
@@ -207,20 +222,20 @@ type ExecutionRecordMetadata struct {
 type BackupArtifactType string
 
 const (
-	BackupRecoveryPackage   BackupArtifactType = "recovery-package"
-	BackupCore              BackupArtifactType = "core-backup"
-	BackupModule            BackupArtifactType = "module-backup"
+	BackupRecoveryPackage    BackupArtifactType = "recovery-package"
+	BackupCore               BackupArtifactType = "core-backup"
+	BackupModule             BackupArtifactType = "module-backup"
 	BackupSystemRestorePoint BackupArtifactType = "system-restore-point"
 )
 
 type BackupArtifactMetadata struct {
-	ID               BackupArtifactID  `json:"id"`
+	ID               BackupArtifactID   `json:"id"`
 	Type             BackupArtifactType `json:"type"`
-	TargetID         TargetID          `json:"target_id"`
-	ModuleInstanceID ModuleInstanceID  `json:"module_instance_id,omitempty"`
-	CreatedAt        string            `json:"created_at"`
-	LocationRef      string            `json:"location_ref,omitempty"`
-	SHA256           string            `json:"sha256,omitempty"`
+	TargetID         TargetID           `json:"target_id"`
+	ModuleInstanceID ModuleInstanceID   `json:"module_instance_id,omitempty"`
+	CreatedAt        string             `json:"created_at"`
+	LocationRef      string             `json:"location_ref,omitempty"`
+	SHA256           string             `json:"sha256,omitempty"`
 }
 
 type Snapshot struct {
@@ -235,21 +250,41 @@ type Snapshot struct {
 }
 
 func (s *Snapshot) normalize() {
-	if s.Targets == nil { s.Targets = []Target{} }
-	if s.CoreSources == nil { s.CoreSources = []CoreSource{} }
-	if s.ModuleSources == nil { s.ModuleSources = []ModuleSource{} }
-	if s.Secrets == nil { s.Secrets = []SecretMetadata{} }
-	if s.ExecutionBundles == nil { s.ExecutionBundles = []ExecutionBundleMetadata{} }
-	if s.ExecutionRecords == nil { s.ExecutionRecords = []ExecutionRecordMetadata{} }
-	if s.Backups == nil { s.Backups = []BackupArtifactMetadata{} }
+	if s.Targets == nil {
+		s.Targets = []Target{}
+	}
+	if s.CoreSources == nil {
+		s.CoreSources = []CoreSource{}
+	}
+	if s.ModuleSources == nil {
+		s.ModuleSources = []ModuleSource{}
+	}
+	if s.Secrets == nil {
+		s.Secrets = []SecretMetadata{}
+	}
+	if s.ExecutionBundles == nil {
+		s.ExecutionBundles = []ExecutionBundleMetadata{}
+	}
+	if s.ExecutionRecords == nil {
+		s.ExecutionRecords = []ExecutionRecordMetadata{}
+	}
+	if s.Backups == nil {
+		s.Backups = []BackupArtifactMetadata{}
+	}
 	for i := range s.Targets {
-		sort.Slice(s.Targets[i].Desired.Modules, func(a, b int) bool { return s.Targets[i].Desired.Modules[a].InstanceID < s.Targets[i].Desired.Modules[b].InstanceID })
-		sort.Slice(s.Targets[i].Observed.Modules, func(a, b int) bool { return s.Targets[i].Observed.Modules[a].InstanceID < s.Targets[i].Observed.Modules[b].InstanceID })
+		sort.Slice(s.Targets[i].Desired.Modules, func(a, b int) bool {
+			return s.Targets[i].Desired.Modules[a].InstanceID < s.Targets[i].Desired.Modules[b].InstanceID
+		})
+		sort.Slice(s.Targets[i].Observed.Modules, func(a, b int) bool {
+			return s.Targets[i].Observed.Modules[a].InstanceID < s.Targets[i].Observed.Modules[b].InstanceID
+		})
 	}
 	sort.Slice(s.Targets, func(i, j int) bool { return s.Targets[i].ID < s.Targets[j].ID })
 	sort.Slice(s.CoreSources, func(i, j int) bool { return s.CoreSources[i].ID < s.CoreSources[j].ID })
 	sort.Slice(s.ModuleSources, func(i, j int) bool {
-		if s.ModuleSources[i].PackageID == s.ModuleSources[j].PackageID { return s.ModuleSources[i].Role < s.ModuleSources[j].Role }
+		if s.ModuleSources[i].PackageID == s.ModuleSources[j].PackageID {
+			return s.ModuleSources[i].Role < s.ModuleSources[j].Role
+		}
 		return s.ModuleSources[i].PackageID < s.ModuleSources[j].PackageID
 	})
 	sort.Slice(s.Secrets, func(i, j int) bool { return s.Secrets[i].ID < s.Secrets[j].ID })
@@ -264,7 +299,9 @@ func validateDesired(value DesiredState) error {
 		if module.InstanceID == "" || module.PackageID == "" || strings.TrimSpace(module.Version) == "" {
 			return errors.New("module desired state requires instance id, package id, and version")
 		}
-		if _, ok := seen[module.InstanceID]; ok { return fmt.Errorf("duplicate module instance %s", module.InstanceID) }
+		if _, ok := seen[module.InstanceID]; ok {
+			return fmt.Errorf("duplicate module instance %s", module.InstanceID)
+		}
 		seen[module.InstanceID] = struct{}{}
 		for _, dependency := range module.Dependencies {
 			if dependency.TargetModule == "" || strings.TrimSpace(dependency.InterfaceID) == "" || strings.TrimSpace(dependency.Consumer) == "" {
@@ -288,6 +325,8 @@ func nowUTC() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
 func marshalDomain(value any) ([]byte, error) {
 	data, err := json.Marshal(value)
-	if err != nil { return nil, fmt.Errorf("encode management state: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("encode management state: %w", err)
+	}
 	return data, nil
 }

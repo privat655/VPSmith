@@ -18,27 +18,51 @@ func migrate(ctx context.Context, conn *sql.Conn) error { return migrateWith(ctx
 
 func migrateWith(ctx context.Context, conn *sql.Conn, set []migration) error {
 	var current int
-	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil { return fmt.Errorf("read management-state schema version: %w", err) }
-	if current > CurrentSchemaVersion && set == migrations { return fmt.Errorf("management-state schema %d is newer than supported schema %d", current, CurrentSchemaVersion) }
+	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
+		return fmt.Errorf("read management-state schema version: %w", err)
+	}
+	if current > CurrentSchemaVersion && set == migrations {
+		return fmt.Errorf("management-state schema %d is newer than supported schema %d", current, CurrentSchemaVersion)
+	}
 	for _, item := range set {
-		if item.version <= current { continue }
-		if item.version != current+1 { return fmt.Errorf("management-state migration gap: have %d, next %d", current, item.version) }
-		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil { return fmt.Errorf("begin migration %d: %w", item.version, err) }
+		if item.version <= current {
+			continue
+		}
+		if item.version != current+1 {
+			return fmt.Errorf("management-state migration gap: have %d, next %d", current, item.version)
+		}
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			return fmt.Errorf("begin migration %d: %w", item.version, err)
+		}
 		committed := false
 		func() {
-			defer func() { if !committed { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") } }()
-			if err := item.up(ctx, conn); err != nil { return }
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", item.version)); err != nil { return }
+			defer func() {
+				if !committed {
+					_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+				}
+			}()
+			if err := item.up(ctx, conn); err != nil {
+				return
+			}
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", item.version)); err != nil {
+				return
+			}
 			var violations string
 			row := conn.QueryRowContext(ctx, "PRAGMA foreign_key_check")
-			if err := row.Scan(&violations); err != nil && !errors.Is(err, sql.ErrNoRows) { return }
-			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil { return }
+			if err := row.Scan(&violations); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return
+			}
+			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+				return
+			}
 			committed = true
 		}()
 		if !committed {
 			var after int
 			_ = conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&after)
-			if after != current { return fmt.Errorf("migration %d failed and changed schema version", item.version) }
+			if after != current {
+				return fmt.Errorf("migration %d failed and changed schema version", item.version)
+			}
 			return fmt.Errorf("migration %d failed", item.version)
 		}
 		current = item.version
@@ -120,6 +144,8 @@ CREATE TRIGGER execution_bundles_no_delete BEFORE DELETE ON execution_bundles BE
 CREATE TRIGGER execution_records_no_update BEFORE UPDATE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution record history is immutable'); END;
 CREATE TRIGGER execution_records_no_delete BEFORE DELETE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution record history is immutable'); END;
 `
-	if _, err := conn.ExecContext(ctx, schema); err != nil { return fmt.Errorf("create schema v1: %w", err) }
+	if _, err := conn.ExecContext(ctx, schema); err != nil {
+		return fmt.Errorf("create schema v1: %w", err)
+	}
 	return nil
 }
