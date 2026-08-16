@@ -21,7 +21,7 @@ func migrateWith(ctx context.Context, conn *sql.Conn, set []migration) error {
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return fmt.Errorf("read management-state schema version: %w", err)
 	}
-	if current > CurrentSchemaVersion && set == migrations {
+	if current > CurrentSchemaVersion {
 		return fmt.Errorf("management-state schema %d is newer than supported schema %d", current, CurrentSchemaVersion)
 	}
 	for _, item := range set {
@@ -103,7 +103,7 @@ CREATE TABLE module_sources (
   base_commit TEXT NOT NULL DEFAULT '',
   version TEXT NOT NULL,
   package_sha256 TEXT NOT NULL,
-  PRIMARY KEY(package_id, role, target_id)
+  PRIMARY KEY(package_id, role,target_id)
 ) STRICT;
 CREATE TABLE secrets (
   id TEXT PRIMARY KEY,
