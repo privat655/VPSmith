@@ -9,13 +9,12 @@ import (
 	"strings"
 )
 
-func threeWayMerge(oldBase, local, newBase string) (string, []string, error) {
+func threeWayMerge(ctx context.Context, oldBase, local, newBase string) (string, []string, error) {
 	work, err := os.MkdirTemp("", "vpsmith-core-merge-*")
 	if err != nil {
 		return "", nil, err
 	}
 	defer os.RemoveAll(work)
-	ctx := context.Background()
 	if err := runGit(ctx, work, "", "init", "-q"); err != nil {
 		return "", nil, err
 	}
@@ -89,7 +88,7 @@ func threeWayMerge(oldBase, local, newBase string) (string, []string, error) {
 		return "", nil, err
 	}
 	if err := copyTreeExcludingGit(work, payload); err != nil {
-		os.RemoveAll(payload)
+		_ = os.RemoveAll(payload)
 		return "", nil, err
 	}
 	return payload, list, nil
@@ -100,11 +99,11 @@ func replaceTree(dst, src string) error {
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		if e.Name() == ".git" {
+	for _, entry := range entries {
+		if entry.Name() == ".git" {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(dst, e.Name())); err != nil {
+		if err := os.RemoveAll(filepath.Join(dst, entry.Name())); err != nil {
 			return err
 		}
 	}
@@ -120,8 +119,8 @@ func replaceTree(dst, src string) error {
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		if err := os.Rename(filepath.Join(tmp, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+	for _, entry := range entries {
+		if err := os.Rename(filepath.Join(tmp, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
 			return err
 		}
 	}
@@ -133,13 +132,13 @@ func copyTreeExcludingGit(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		if e.Name() == ".git" {
+	for _, entry := range entries {
+		if entry.Name() == ".git" {
 			continue
 		}
-		from := filepath.Join(src, e.Name())
-		to := filepath.Join(dst, e.Name())
-		info, err := e.Info()
+		from := filepath.Join(src, entry.Name())
+		to := filepath.Join(dst, entry.Name())
+		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
