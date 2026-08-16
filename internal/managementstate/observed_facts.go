@@ -53,10 +53,12 @@ type ContainerObservedState struct {
 }
 
 type NetworkObservedState struct {
-	Name     string   `json:"name"`
-	Present  bool     `json:"present"`
-	Internal bool     `json:"internal"`
-	Members  []string `json:"members,omitempty"`
+	Name         string   `json:"name"`
+	Present      bool     `json:"present"`
+	Internal     bool     `json:"internal"`
+	Subnets      []string `json:"subnets,omitempty"`
+	Relationship string   `json:"relationship,omitempty"`
+	Members      []string `json:"members,omitempty"`
 }
 
 type ServiceObservedState struct {
@@ -80,9 +82,12 @@ type ExecutionProofObservedState struct {
 }
 
 type LinkNetworkObservedState struct {
-	Name    string   `json:"name"`
-	Present bool     `json:"present"`
-	Members []string `json:"members,omitempty"`
+	Name              string   `json:"name"`
+	Present           bool     `json:"present"`
+	Subnet            string   `json:"subnet,omitempty"`
+	Relationship      string   `json:"relationship,omitempty"`
+	DefinitionMatches bool     `json:"definition_matches"`
+	Members           []string `json:"members,omitempty"`
 }
 
 // NormalizeObservedState makes set-like facts deterministic without changing
@@ -102,6 +107,7 @@ func NormalizeObservedState(value *ObservedState) {
 	}
 	for i := range value.Core.Networks {
 		sort.Strings(value.Core.Networks[i].Members)
+		sort.Strings(value.Core.Networks[i].Subnets)
 	}
 	for i := range value.Modules {
 		module := &value.Modules[i]
@@ -114,7 +120,13 @@ func NormalizeObservedState(value *ObservedState) {
 		}
 		for j := range module.Networks {
 			sort.Strings(module.Networks[j].Members)
+			sort.Strings(module.Networks[j].Subnets)
 		}
+	}
+	sort.Slice(value.PodmanNetworks, func(i, j int) bool { return value.PodmanNetworks[i].Name < value.PodmanNetworks[j].Name })
+	for i := range value.PodmanNetworks {
+		sort.Strings(value.PodmanNetworks[i].Members)
+		sort.Strings(value.PodmanNetworks[i].Subnets)
 	}
 	sort.Slice(value.LinkNetworks, func(i, j int) bool { return value.LinkNetworks[i].Name < value.LinkNetworks[j].Name })
 	for i := range value.LinkNetworks {
