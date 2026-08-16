@@ -305,12 +305,12 @@ func TestLogsAreBoundedDirectAndDoNotChangePersistedOrRemoteState(t *testing.T) 
 
 func TestGatewayHasNoArbitraryCommandInterface(t *testing.T) {
 	allowed := map[string]bool{
-		"EnsureIdentity":  true,
-		"ObserveHostKey":  true,
-		"ConfirmHostKey":  true,
-		"ResetTrust":      true,
-		"Inspect":         true,
-		"Logs":            true,
+		"EnsureIdentity": true,
+		"ObserveHostKey": true,
+		"ConfirmHostKey": true,
+		"ResetTrust":     true,
+		"Inspect":        true,
+		"Logs":           true,
 	}
 	typeOfGateway := reflect.TypeOf(&Gateway{})
 	for i := 0; i < typeOfGateway.NumMethod(); i++ {
