@@ -27,17 +27,27 @@ FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea
 ARG VERSION
 ARG REVISION
 
-RUN mkdir -p \
+RUN printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260713T000000Z bookworm main' \
+      > /etc/apt/sources.list \
+    && rm -f /etc/apt/sources.list.d/* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends git=1:2.39.5-0+deb12u3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p \
       /var/lib/vpsmith/state \
       /var/lib/vpsmith/sources \
       /var/lib/vpsmith/backups \
       /usr/share/vpsmith/embedded \
+      /usr/local/libexec \
     && chown -R 10001:10001 /var/lib/vpsmith
 
 COPY --from=build --chown=10001:10001 /out/vpsmith-studio /usr/local/bin/vpsmith-studio
 COPY --chown=0:0 embedded/ /usr/share/vpsmith/embedded/
+COPY --chmod=0555 --chown=0:0 build/vpsmith-git-askpass.sh /usr/local/libexec/vpsmith-git-askpass
 
-RUN /usr/local/bin/vpsmith-studio version >/dev/null
+RUN git --version | grep -F 'git version 2.39.5' \
+    && /usr/local/bin/vpsmith-studio version >/dev/null
 
 LABEL org.opencontainers.image.title="VPSmith Platform" \
       org.opencontainers.image.version="$VERSION" \
