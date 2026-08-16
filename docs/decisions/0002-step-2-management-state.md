@@ -10,7 +10,7 @@ Two implementation choices were intentionally left open by the specs: the local 
 
 ## Decision: SQLite for administrative persistence
 
-VPSmith uses a single local SQLite database at `/var/lib/vpsmith/state/vpsmith.db` through `database/sql` and the CGO-free `modernc.org/sqlite` driver. The state directory is restricted to mode `0700` and the database to `0600`.
+VPSmith uses a single local SQLite database at `/var/lib/vpsmith/state/vpsmith.db` through `database/sql` and the CGO-free `modernc.org/sqlite` driver. Step 2 pins `modernc.org/sqlite` to the Go-1.23-compatible v1.36.3 line and its matching `modernc.org/libc` dependency, preserving the language-compatibility floor established in step 1 while the canonical build continues to use Go 1.26.5. The state directory is restricted to mode `0700` and the database to `0600`.
 
 SQLite was chosen because it provides atomic transactions, crash recovery, constraints, explicit schema versioning, and a mature future backup seam without requiring VPSmith to recreate those mechanisms around JSON or YAML files. The existing step-1 build remains `CGO_ENABLED=0`, so the CGO-dependent `mattn/go-sqlite3` driver is not used.
 
@@ -37,7 +37,7 @@ Rollback-journal mode is intentional. VPSmith Studio is a small local single-wri
 
 ## Decision: AES-256-GCM for the running secret store
 
-Secret values are encrypted individually with AES-256-GCM using Go's standard `crypto/aes`, `crypto/cipher`, and `crypto/rand` packages. Each ciphertext receives a fresh random nonce. Authenticated additional data binds the ciphertext to the crypto format and stable `SecretID`, so ciphertext cannot be silently moved between secret identities.
+Secret values are encrypted individually with AES-256-GCM using Go's standard `crypto/aes`, `crypto/cipher`, and `crypto/rand` packages. Each ciphertext receives a fresh cryptographically random nonce. Authenticated additional data binds the ciphertext to the crypto format and stable `SecretID`, so ciphertext cannot be silently moved between secret identities. Nonces are generated explicitly instead of using the Go-1.26-only convenience constructor so the source retains step 1's Go 1.23 language compatibility.
 
 The 256-bit master key is stored at `/var/lib/vpsmith/state/secret-store.key` with mode `0600`. If an existing database loses its key, VPSmith fails closed instead of generating a replacement and making existing secrets unreadable. Secret material is never part of normal snapshots, history records, execution-bundle metadata, debug formatting, or normal JSON serialization.
 
@@ -52,11 +52,15 @@ The later portable Wiederanlaufpaket must protect both database and master key i
 - **age for every running secret record:** age remains the correct later portable-file envelope, but per-record use would add key/identity management without improving the running local threat boundary.
 - **Enterprise KMS:** unnecessary additional infrastructure for a portable local V1 administration tool.
 
+## Identity rule
+
+`CoreSourceID` and `ModulePackageID` identify immutable exact source/package stands. A different commit or package SHA therefore receives a new identity; remote, local and target facts never reinterpret an existing identity as a different package. Readable versions remain metadata and are not treated as technical identity.
+
 ## Module shape
 
 `internal/managementstate` is a deep Module. Its Interface is intentionally small: open/load the state, read a consistent Snapshot, apply an atomic domain Change, resolve a secret for controlled internal use, and close the store. Domain callers do not receive table-level CRUD interfaces and cannot write the persistence layer directly.
 
-The Module owns the invariants that observed state cannot mutate desired state, source synchronization cannot mutate target state, a VPSmith Studio update cannot mutate target Core state, execution history is append-only, and referenced secrets cannot be removed.
+The Module owns the invariants that observed state cannot mutate desired state, source synchronization cannot mutate target state, a VPSmith Studio update cannot mutate target Core state, exact source identities are immutable, execution history is append-only, and referenced secrets cannot be removed.
 
 ## Scope boundary
 
