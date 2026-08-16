@@ -113,7 +113,10 @@ uninstall: {delete_persistent_data: true, delete_secrets: true}
 				"module.yaml":         &fstest.MapFile{Data: []byte(document)},
 				"actions/validate.sh": &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n")},
 			}
-			if name == "erpverein-multicontainer" {
+			switch name {
+			case "n8n":
+				files["actions/migrate.sh"] = &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n")}
+			case "erpverein-multicontainer":
 				files["actions/migrate-site.sh"] = &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n")}
 			}
 			m, err := (Compiler{}).Compile(Package{FS: files})
