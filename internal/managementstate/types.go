@@ -326,6 +326,7 @@ func validateDesired(value DesiredState) error {
 			if dependency.TargetModule == "" || strings.TrimSpace(dependency.InterfaceID) == "" || strings.TrimSpace(dependency.Consumer) == "" {
 				return fmt.Errorf("module %s has incomplete dependency", module.InstanceID)
 			}
+		}
 	}
 	return nil
 }
