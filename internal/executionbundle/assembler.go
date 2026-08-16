@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/privat655/VPSmith/internal/targetrunner"
 )
 
 type Assembler struct {
@@ -41,8 +43,11 @@ func (a *Assembler) Assemble(in Input) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, fmt.Errorf("encode expected post state: %w", err)
 	}
+	runnerBytes := targetrunner.Bytes()
+	runnerSum := targetrunner.SHA256()
+	files = append(files, File{Path: targetrunner.Path, Mode: 0o555, Data: runnerBytes})
 	m := Manifest{
-		FormatVersion: 1, Kind: in.Kind, TargetID: in.TargetID, SubjectKind: in.SubjectKind, SubjectID: in.SubjectID,
+		FormatVersion: 2, Runner: RunnerIdentity{Version: targetrunner.Version, Path: targetrunner.Path, SHA256: runnerSum}, Kind: in.Kind, TargetID: in.TargetID, SubjectKind: in.SubjectKind, SubjectID: in.SubjectID,
 		SubjectIdentity: in.SubjectIdentity, PackageID: in.PackageID, PackageSHA256: in.PackageSHA256, Version: in.Version,
 		Sources: append([]SourceIdentity(nil), in.Sources...), Images: append([]ImageIdentity(nil), in.Images...), Artifacts: artifacts,
 		Actions: actions, Secrets: append([]SecretReference(nil), in.Secrets...), Preconditions: append([]Precondition(nil), in.Preconditions...),
@@ -83,7 +88,14 @@ func (a *Assembler) Open(id string) (Bundle, error) {
 		return Bundle{}, err
 	}
 	sum := sha256.Sum256(data)
-	return Bundle{ID: id, SHA256: hex.EncodeToString(sum[:]), Bytes: data}, nil
+	bundle := Bundle{ID: id, SHA256: hex.EncodeToString(sum[:]), Bytes: data}
+	manifest, err := Verify(bundle)
+	if err != nil {
+		return Bundle{}, fmt.Errorf("verify stored execution bundle: %w", err)
+	}
+	bundle.Kind = manifest.Kind
+	bundle.Manifest = manifest
+	return bundle, nil
 }
 
 func (a *Assembler) store(bundle Bundle) error {

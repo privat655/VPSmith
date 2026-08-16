@@ -24,6 +24,12 @@ type ImageIdentity struct {
 	Digest string `json:"digest"`
 }
 
+type RunnerIdentity struct {
+	Version string `json:"version"`
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+}
+
 type SecretReference struct {
 	SecretID  string `json:"secret_id"`
 	Container string `json:"container"`
@@ -53,6 +59,7 @@ type Step struct {
 
 type Manifest struct {
 	FormatVersion   int               `json:"format_version"`
+	Runner          RunnerIdentity    `json:"runner"`
 	BundleID        string            `json:"bundle_id"`
 	Kind            Kind              `json:"kind"`
 	TargetID        string            `json:"target_vps_id"`

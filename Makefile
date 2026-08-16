@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: fmt fmt-check vet test build embedded-update embedded-check verify-go verify-docker verify-podman verify-containers verify-repro-docker verify-repro-podman verify-ci
+.PHONY: fmt fmt-check vet test build embedded-update embedded-check verify-go verify-docker verify-podman verify-containers verify-repro-docker verify-repro-podman verify-execution-sandbox verify-ci
 
 fmt:
 	$(GO) fmt ./...
@@ -41,4 +41,7 @@ verify-repro-docker:
 verify-repro-podman:
 	./build/verify-reproducible-image.sh podman
 
-verify-ci: verify-go verify-containers verify-repro-docker verify-repro-podman
+verify-execution-sandbox:
+	./build/verify-execution-sandbox.sh
+
+verify-ci: verify-go verify-containers verify-repro-docker verify-repro-podman verify-execution-sandbox

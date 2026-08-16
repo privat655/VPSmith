@@ -91,6 +91,31 @@ func normalizeFiles(in Input) ([]File, []Artifact, []Action, error) {
 }
 
 func normalizeManifest(m *Manifest) {
+	if m.Sources == nil {
+		m.Sources = []SourceIdentity{}
+	}
+	if m.Images == nil {
+		m.Images = []ImageIdentity{}
+	}
+	if m.Artifacts == nil {
+		m.Artifacts = []Artifact{}
+	}
+	if m.Actions == nil {
+		m.Actions = []Action{}
+	}
+	if m.Secrets == nil {
+		m.Secrets = []SecretReference{}
+	}
+	if m.Preconditions == nil {
+		m.Preconditions = []Precondition{}
+	}
+	if m.Validations == nil {
+		m.Validations = []ValidationSpec{}
+	}
+	if m.Steps == nil {
+		m.Steps = []Step{}
+	}
+
 	sort.Slice(m.Sources, func(i, j int) bool {
 		if m.Sources[i].Kind == m.Sources[j].Kind {
 			return m.Sources[i].ID < m.Sources[j].ID

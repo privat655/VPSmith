@@ -1,0 +1,58 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends systemd systemd-sysv openssh-server sudo python3 util-linux coreutils ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --shell /bin/bash dev \
+ && echo 'dev:disabled-login-password' | chpasswd \
+ && install -d -m 0700 -o dev -g dev /home/dev/.ssh \
+ && printf 'dev ALL=(ALL) NOPASSWD: ALL\n' >/etc/sudoers.d/90-vpsmith-dev \
+ && chmod 0440 /etc/sudoers.d/90-vpsmith-dev \
+ && install -d -m 0755 /run/sshd /var/lib/vpsmith/inventory \
+ && ssh-keygen -A \
+ && printf '%s\n' \
+      'PasswordAuthentication no' \
+      'KbdInteractiveAuthentication no' \
+      'PubkeyAuthentication yes' \
+      'PermitRootLogin no' \
+      'AllowUsers dev' \
+      'UsePAM no' \
+      > /etc/ssh/sshd_config.d/90-vpsmith-sandbox.conf \
+ && systemctl enable ssh.service
+
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      "trap 'rm -f /run/vpsmith-sandbox-app.active' EXIT HUP INT TERM" \
+      ': > /run/vpsmith-sandbox-app.active' \
+      'while :; do sleep 60; done' \
+      > /usr/local/bin/vpsmith-sandbox-service \
+ && chmod 0755 /usr/local/bin/vpsmith-sandbox-service
+
+RUN printf '%s\n' \
+      '[Unit]' \
+      'Description=VPSmith execution sandbox application' \
+      '' \
+      '[Service]' \
+      'Type=simple' \
+      'ExecStart=/usr/local/bin/vpsmith-sandbox-service' \
+      'Restart=no' \
+      > /etc/systemd/system/vpsmith-sandbox-app.service
+
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      'if [ "${1:-}" = exec ] && [ "${2:-}" = -- ] && [ "${3:-}" = vpsmith-sandbox-app ]; then' \
+      '  test -e /run/vpsmith-sandbox-app.active || exit 125' \
+      '  shift 3' \
+      '  exec "$@"' \
+      'fi' \
+      'printf "unsupported sandbox podman invocation\\n" >&2' \
+      'exit 64' \
+      > /usr/local/bin/podman \
+ && chmod 0755 /usr/local/bin/podman \
+ && systemctl disable systemd-resolved.service systemd-networkd.service systemd-networkd-wait-online.service 2>/dev/null || true
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
