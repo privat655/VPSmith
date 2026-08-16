@@ -12,14 +12,29 @@ import (
 )
 
 type RemoteConfig struct {
-	Owner, Repository, Ref, Token string
+	Owner      string
+	Repository string
+	Ref        string
+	Token      string
 }
-type FetchResult struct{ Commit, Path string }
+
+type FetchResult struct {
+	Commit string
+	Path   string
+}
+
 type PushRequest struct {
-	Config                    RemoteConfig
-	PackagePath, WorkspacePath, BaseCommit, Message string
+	Config        RemoteConfig
+	PackagePath   string
+	WorkspacePath string
+	BaseCommit    string
+	Message       string
 }
-type PushResult struct{ Commit, RemoteCommit string }
+
+type PushResult struct {
+	Commit       string
+	RemoteCommit string
+}
 
 type Remote interface {
 	Fetch(context.Context, RemoteConfig, string) (FetchResult, error)
@@ -31,8 +46,10 @@ type gitRemote struct {
 	beforePush func()
 }
 
-func NewGithubRemote() Remote              { return &gitRemote{} }
-func NewLocalGitRemote(url string) Remote  { return &gitRemote{fixedURL: url} }
+func NewGithubRemote() Remote { return &gitRemote{} }
+func NewLocalGitRemote(url string) Remote {
+	return &gitRemote{fixedURL: url}
+}
 
 func (r *gitRemote) Fetch(ctx context.Context, cfg RemoteConfig, packagePath string) (FetchResult, error) {
 	if err := validatePackagePath(packagePath); err != nil {
@@ -69,7 +86,7 @@ func (r *gitRemote) Fetch(ctx context.Context, cfg RemoteConfig, packagePath str
 		return FetchResult{}, err
 	}
 	if err := copyTree(src, out); err != nil {
-		os.RemoveAll(out)
+		_ = os.RemoveAll(out)
 		return FetchResult{}, err
 	}
 	return FetchResult{Commit: commit, Path: out}, nil
@@ -124,7 +141,11 @@ func (r *gitRemote) Push(ctx context.Context, req PushRequest) (PushResult, erro
 	if !changed {
 		return PushResult{}, errors.New("workspace has no changes to push")
 	}
-	if err := runGit(ctx, work, req.Config.Token, "-c", "user.name=VPSmith Studio", "-c", "user.email=vpsmith@localhost", "commit", "-q", "-m", req.Message, "--", req.PackagePath); err != nil {
+	if err := runGit(ctx, work, req.Config.Token,
+		"-c", "user.name=VPSmith Studio",
+		"-c", "user.email=vpsmith@localhost",
+		"commit", "-q", "-m", req.Message, "--", req.PackagePath,
+	); err != nil {
 		return PushResult{}, err
 	}
 	commit, err := gitOutput(ctx, work, req.Config.Token, "rev-parse", "HEAD")
@@ -204,10 +225,12 @@ func runGit(ctx context.Context, dir, token string, args ...string) error {
 	_, err := gitCommand(ctx, dir, token, args...)
 	return err
 }
+
 func gitOutput(ctx context.Context, dir, token string, args ...string) (string, error) {
 	out, err := gitCommand(ctx, dir, token, args...)
 	return strings.TrimSpace(string(out)), err
 }
+
 func gitChanged(ctx context.Context, dir, token string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet", "--exit-code")
 	cmd.Dir = dir
@@ -222,6 +245,7 @@ func gitChanged(ctx context.Context, dir, token string) (bool, error) {
 	}
 	return false, fmt.Errorf("inspect staged git diff: %w", err)
 }
+
 func gitCommand(ctx context.Context, dir, token string, args ...string) ([]byte, error) {
 	for _, arg := range args {
 		if arg == "--force" || arg == "--force-with-lease" || strings.HasPrefix(arg, "+") {
@@ -239,11 +263,19 @@ func gitCommand(ctx context.Context, dir, token string, args ...string) ([]byte,
 	}
 	return stdout.Bytes(), nil
 }
+
 func gitEnv(token string) []string {
-	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0"}
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=/nonexistent",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_OPTIONAL_LOCKS=0",
+	}
 	if token != "" {
 		env = append(env, "VPSMITH_GIT_PAT="+token, "GIT_ASKPASS="+askPassPath())
 	}
 	return env
 }
+
 func askPassPath() string { return "/usr/local/libexec/vpsmith-git-askpass" }
