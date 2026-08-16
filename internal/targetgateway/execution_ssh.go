@@ -49,8 +49,10 @@ func (t *sshTransport) StartExecution(ctx context.Context, sess session, request
 		return errors.New("invalid target runner path")
 	}
 	unit := "vpsmith-exec-" + request.RunID
-	work := "/run/vpsmith-execution/" + request.RunID
-	fifo := work + "/secrets.pipe"
+	runtime := "/run/vpsmith-execution/" + request.RunID
+	workRoot := "/var/tmp/vpsmith-execution-work"
+	work := workRoot + "/" + request.RunID
+	fifo := runtime + "/secrets.pipe"
 	script := `set -eu
 umask 077
 root=/var/tmp/vpsmith-execution
@@ -64,13 +66,14 @@ python=$(command -v python3) || { echo 'python3 missing' >&2; exit 45; }
 command -v systemd-run >/dev/null 2>&1 || { echo 'systemd-run missing' >&2; exit 46; }
 command -v tar >/dev/null 2>&1 || { echo 'tar missing' >&2; exit 47; }
 command -v flock >/dev/null 2>&1 || { echo 'flock missing' >&2; exit 48; }
-install -d -m 0700 ` + shellQuote(work) + `
-runner=` + shellQuote(work+"/runner.py") + `
+install -d -m 0700 ` + shellQuote(runtime) + `
+install -d -m 0711 ` + shellQuote(workRoot) + ` ` + shellQuote(work) + `
+runner=` + shellQuote(runtime+"/runner.py") + `
 tar -xOf "$bundle" ` + shellQuote(request.Runner.Path) + ` > "$runner"
 rgot=$(sha256sum "$runner"); rgot=${rgot%% *}
 [ "$rgot" = "` + request.Runner.SHA256 + `" ] || { echo 'target runner sha256 mismatch' >&2; exit 48; }
 chmod 0500 "$runner"
-systemd-run --quiet --collect --unit=` + shellQuote(unit) + ` --property=Type=exec --property=UMask=0077 --property=StandardOutput=null --property=StandardError=null "$python" "$runner" --bundle "$bundle" --bundle-id ` + shellQuote(request.BundleID) + ` --bundle-sha256 ` + shellQuote(request.BundleSHA256) + ` --target-id ` + shellQuote(request.TargetID) + ` --run-id ` + shellQuote(request.RunID) + ` --admin-user ` + shellQuote(sess.SSHUser) + ` --secret-fifo ` + shellQuote(fifo) + ` --work-dir ` + shellQuote(work)
+systemd-run --quiet --collect --unit=` + shellQuote(unit) + ` --property=Type=exec --property=UMask=0077 --property=StandardOutput=null --property=StandardError=null "$python" "$runner" --bundle "$bundle" --bundle-id ` + shellQuote(request.BundleID) + ` --bundle-sha256 ` + shellQuote(request.BundleSHA256) + ` --target-id ` + shellQuote(request.TargetID) + ` --run-id ` + shellQuote(request.RunID) + ` --admin-user ` + shellQuote(sess.SSHUser) + ` --secret-fifo ` + shellQuote(fifo) + ` --work-dir ` + shellQuote(work) + `
 	_, stderr, err := t.runRemoteInput(ctx, sess, "sudo -n sh -eu -c "+shellQuote(script), nil)
 	if err != nil {
 		return fmt.Errorf("start detached execution runner: %w%s", err, boundedRemoteError(stderr))
