@@ -1,6 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
+# Step 1 reference host adapter. Linux host networking is an implementation
+# detail; the stable VPSmith contract is local-only reachability on 127.0.0.1.
+host_os=$(uname -s 2>/dev/null || printf 'unknown')
+if [ "$host_os" != "Linux" ]; then
+  printf 'ERROR: build/run.sh is the Linux reference launcher; no verified VPSmith host adapter exists for %s yet\n' "$host_os" >&2
+  exit 2
+fi
+
 engine="${1:-docker}"
 image="${2:-ghcr.io/privat655/vpsmith-platform:$(tr -d '\r\n' < "$(dirname "$0")/../VERSION")}"
 case "$engine" in

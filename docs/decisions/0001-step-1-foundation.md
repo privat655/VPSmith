@@ -45,9 +45,11 @@ The step-1 source trees are marked `0.1.0-scaffold.1` and are deliberately non-d
 
 The process address is a compile-time constant: `127.0.0.1:8787`. It is not configurable by environment variable or command-line flag. Startup validates that the actual listener is loopback and fails closed otherwise.
 
-The Version 1 administrative workstation support envelope is deliberately **Linux on amd64**. The container uses Linux host networking (`--network host`) so the process itself can bind to loopback without exposing a wildcard container listener. Windows and macOS administrative workstations are not supported in Version 1. Expanding workstation support later requires an explicit replacement or extension of this start/network contract rather than silently weakening the loopback invariant.
+The stable administrative-workstation contract is local-only Studio reachability, Docker/Podman startability, and the persistent mount contract below. Step 1 verifies Linux/amd64 as the current reference host/build platform. Linux host networking (`--network host`) is the reference host adapter used in step 1 so the process itself can bind to loopback without exposing a wildcard container listener.
 
-The reduced network isolation of host networking is countered by the tiny local-only process, non-root UID, read-only root filesystem, dropped capabilities, `no-new-privileges`, no engine socket mount, and exactly three writable persistent volumes.
+Linux host networking is an implementation detail, not a VPSmith product boundary. Windows, macOS, and other workstation architectures are not verified in step 1, but they are not excluded from the VPSmith product architecture. Future host-specific adapters must preserve the same local-only endpoint and persistence contract and must not weaken the Studio listener to a wildcard address. No speculative runtime interface is introduced before such a second implementation exists.
+
+The reduced network isolation of the Linux reference adapter is countered by the tiny local-only process, non-root UID, read-only root filesystem, dropped capabilities, `no-new-privileges`, no engine socket mount, and exactly three writable persistent volumes.
 
 Podman normally makes `/tmp`, `/run`, and `/var/tmp` writable tmpfs even when `--read-only` is set. VPSmith disables that Podman default with `--read-only-tmpfs=false` so the only writable runtime locations remain the three declared persistent volumes.
 
@@ -67,12 +69,16 @@ The build is a multi-stage OCI build. Builder and runtime base images are pinned
 
 The build receives version, Git revision, and `SOURCE_DATE_EPOCH` explicitly. Go builds use `-trimpath` and `-buildvcs=false`. Docker uses a named `docker-container` Buildx builder pinned to BuildKit 0.30.0 plus the Docker exporter with `SOURCE_DATE_EPOCH`, a fixed `linux/amd64` platform, disabled attestations, and `rewrite-timestamp=true` so filesystem timestamps are normalized as well. Podman uses its native `--source-date-epoch` and `--rewrite-timestamp` build options, and builds Docker image format so the declared `HEALTHCHECK` is preserved. CI checks reproducible image IDs independently for both engines.
 
+The fixed `linux/amd64` platform is the step-1 reproducibility baseline, not a domain constraint. Additional OCI architectures such as `linux/arm64` may be added later without changing the VPSmith Studio, persistence, or Ziel-VPS contracts.
+
 ### Supported platforms
 
-Version 1 supports the administrative container on **Linux/amd64** with Docker or Podman. Step 1 verifies that contract on GitHub Actions `ubuntu-24.04`. Other administrative-workstation operating systems and architectures are outside the Version 1 support envelope.
+Step 1 verifies the administrative container and Linux reference launcher on **Linux/amd64** with Docker and Podman using GitHub Actions `ubuntu-24.04`. Other administrative-workstation operating systems and architectures are currently unverified, not architecturally excluded.
 
 For later Ziel-VPS live integration, the initial target baseline is Ubuntu Server 24.04 LTS on amd64. This is only a future integration baseline; step 1 contains no Ziel-VPS operations.
 
 ## Consequences
 
 The foundation has only two meaningful current Modules: release identity verification and the thin VPSmith Studio HTTP adapter. There is no speculative runtime seam for the VPSmith Github and no early implementation of Verwaltungszustand, SSH, source editing, generators, Core, Module lifecycle, or Backup.
+
+The workstation portability seam remains shallow and local: the current `build/run.sh` is a Linux reference host adapter around stable Studio/container contracts. A future second host implementation can replace or complement that adapter without moving domain code or changing the loopback invariant.
