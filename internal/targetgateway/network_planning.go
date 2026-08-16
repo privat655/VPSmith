@@ -24,10 +24,10 @@ type planningLinkInventoryDocument struct {
 }
 
 type podmanNetworkListEntry struct {
-	Name       string            `json:"name"`
-	Internal   bool              `json:"internal"`
-	Labels     map[string]string `json:"labels"`
-	Subnets    []struct {
+	Name     string            `json:"name"`
+	Internal bool              `json:"internal"`
+	Labels   map[string]string `json:"labels"`
+	Subnets  []struct {
 		Subnet string `json:"subnet"`
 	} `json:"subnets"`
 }
