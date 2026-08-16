@@ -6,8 +6,6 @@ import (
 	"fmt"
 )
 
-func init() { migrations = append(migrations, migration{version: 2, up: migrateV2}) }
-
 func migrateV2(ctx context.Context, conn *sql.Conn) error {
 	const schema = `
 CREATE TABLE source_artifacts (
