@@ -544,6 +544,7 @@ func (c *Change) assertMaterialAbsentFromDomain(material []byte) error {
 		}
 	}
 	for _, query := range []string{
+		`SELECT name FROM secrets`,
 		`SELECT version||sha256||base_source_id FROM core_sources`,
 		`SELECT owner||repository||ref||commit_sha||base_commit||version||package_sha256 FROM module_sources`,
 		`SELECT kind||version||sha256 FROM execution_bundles`,
