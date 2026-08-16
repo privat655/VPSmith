@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/privat655/VPSmith/internal/managementstate"
 	"github.com/privat655/VPSmith/internal/releaseinfo"
 	"github.com/privat655/VPSmith/internal/studio"
 )
@@ -83,6 +84,16 @@ func serve() error {
 			return err
 		}
 	}
+
+	state, err := managementstate.Open(stateDir)
+	if err != nil {
+		return fmt.Errorf("open canonical management state: %w", err)
+	}
+	defer func() {
+		if err := state.Close(); err != nil {
+			log.Printf("ERROR: close management state: %v", err)
+		}
+	}()
 
 	listener, err := net.Listen("tcp4", listenAddress)
 	if err != nil {
