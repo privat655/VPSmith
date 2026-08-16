@@ -94,6 +94,11 @@ func (t *sshTransport) Inspect(ctx context.Context, sess session) (managementsta
 	if err != nil {
 		return result, err
 	}
+	networks, links, err := t.planningNetworkFacts(ctx, sess, links)
+	if err != nil {
+		return result, err
+	}
+	result.PodmanNetworks = networks
 	result.LinkNetworks = links
 	return result, nil
 }

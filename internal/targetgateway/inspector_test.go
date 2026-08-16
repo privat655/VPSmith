@@ -26,6 +26,40 @@ func TestProductionInspectionUsesOnlyKnownReadOnlyShapes(t *testing.T) {
 	if !observed.Core.Caddy.ConfigChecked || !observed.Core.Caddy.ConfigValid {
 		t.Fatalf("caddy facts = %#v", observed.Core.Caddy)
 	}
+	link := observed.LinkNetworks[0]
+	if link.Subnet != "10.240.1.0/24" || link.Relationship != "provider-1/api->module-a/app" || !link.DefinitionMatches {
+		t.Fatalf("link facts = %#v", link)
+	}
+	if len(observed.PodmanNetworks) != 2 || observed.PodmanNetworks[0].Name != "core-net" || observed.PodmanNetworks[1].Name != "foreign-net" {
+		t.Fatalf("podman networks = %#v", observed.PodmanNetworks)
+	}
+	if !reflect.DeepEqual(observed.PodmanNetworks[1].Subnets, []string{"10.240.2.0/24"}) {
+		t.Fatalf("foreign network subnets = %#v", observed.PodmanNetworks[1].Subnets)
+	}
+}
+
+func TestProductionInspectionKeepsManagedLinkDefinitionDriftVisible(t *testing.T) {
+	base := inspectionFixture(t)
+	runner := &captureRunner{}
+	runner.hook = func(name string, args []string) ([]byte, []byte, error) {
+		command := args[len(args)-1]
+		if command == `if command -v podman >/dev/null 2>&1; then podman network ls --format json; fi` {
+			return []byte(`[{"name":"core-net","internal":true,"labels":{"vpsmith.relationship":"provider-1/api->module-a/app"},"subnets":[{"subnet":"10.240.99.0/24"}]}]`), nil, nil
+		}
+		return base(name, args)
+	}
+	transport := newSSHTransportAt(t.TempDir(), runner)
+	key := testHostObservation(4)
+	observed, err := transport.Inspect(context.Background(), session{endpoint: endpoint{Address: "203.0.113.11", SSHUser: "dev"}, HostKey: key.PublicKey, IdentitySeed: bytes.Repeat([]byte{6}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observed.LinkNetworks) != 1 || observed.LinkNetworks[0].DefinitionMatches {
+		t.Fatalf("drifted link facts = %#v", observed.LinkNetworks)
+	}
+	if observed.LinkNetworks[0].Subnet != "10.240.99.0/24" {
+		t.Fatalf("actual subnet was not preserved: %#v", observed.LinkNetworks[0])
+	}
 }
 
 func inspectionFixture(t *testing.T) func(string, []string) ([]byte, []byte, error) {
@@ -46,9 +80,11 @@ func inspectionFixture(t *testing.T) func(string, []string) ([]byte, []byte, err
 		case strings.Contains(command, moduleInventoryPath):
 			return []byte(`{"modules":[{"instance_id":"module-a","package_id":"pkg-a","version":"1","package_sha256":"` + sha + `","units":[{"name":"module-a.service","scope":"user"}],"containers":["module-a"],"networks":["core-net"],"managed_artifacts":["/var/lib/vpsmith/module-a/config.json"]}]}`), nil, nil
 		case strings.Contains(command, linkInventoryPath):
-			return []byte(`{"networks":[{"name":"core-net"}]}`), nil, nil
+			return []byte(`{"networks":[{"relationship":"provider-1/api->module-a/app","name":"core-net","subnet":"10.240.1.0/24","alias":"if-aabbccdd","provider":"provider-1/app","consumer":"module-a/app"}]}`), nil, nil
 		case command == `if command -v podman >/dev/null 2>&1; then podman info --format json; fi`:
 			return []byte(`{"host":{"cgroupVersion":"v2","security":{"rootless":true},"rootlessNetworkCmd":"pasta"}}`), nil, nil
+		case command == `if command -v podman >/dev/null 2>&1; then podman network ls --format json; fi`:
+			return []byte(`[{"name":"core-net","internal":true,"labels":{"vpsmith.relationship":"provider-1/api->module-a/app"},"subnets":[{"subnet":"10.240.1.0/24"}]},{"name":"foreign-net","internal":false,"labels":{},"subnets":[{"subnet":"10.240.2.0/24"}]}]`), nil, nil
 		case strings.HasPrefix(command, "systemctl --user show --no-pager --property=LoadState"):
 			return []byte("LoadState=loaded\nActiveState=active\nSubState=running\n"), nil, nil
 		case command == "podman inspect 'caddy' 2>/dev/null || true", command == "podman inspect 'module-a' 2>/dev/null || true":
