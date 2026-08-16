@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -23,6 +24,7 @@ const (
 type Store struct {
 	db  *sql.DB
 	key []byte
+	mu  sync.RWMutex
 }
 
 type TargetRegistration struct {
@@ -154,6 +156,8 @@ func loadOrCreateKey(path string, databaseExisted bool) ([]byte, error) {
 }
 
 func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -164,6 +168,8 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Change(ctx context.Context, fn func(*Change) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if fn == nil {
 		return errors.New("management-state change function is required")
 	}
@@ -585,6 +591,8 @@ func requireOne(result sql.Result, name string) error {
 }
 
 func (s *Store) ResolveSecret(ctx context.Context, id SecretID, consume func(SecretMaterial) error) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if consume == nil {
 		return errors.New("secret consumer is required")
 	}
@@ -614,6 +622,8 @@ func (s *Store) ResolveSecret(ctx context.Context, id SecretID, consume func(Sec
 }
 
 func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := Snapshot{SchemaVersion: CurrentSchemaVersion}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,address,ssh_user,ssh_identity_secret_id,ssh_host_key,ssh_host_fingerprint,ssh_trust,desired_json,observed_json FROM targets ORDER BY id`)
 	if err != nil {
