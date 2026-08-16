@@ -25,6 +25,7 @@ func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate(t *testi
 	coreEmbedded := mustID(t, managementstate.NewCoreSourceID)
 	coreTarget := mustID(t, managementstate.NewCoreSourceID)
 	packageID := mustID(t, managementstate.NewModulePackageID)
+	targetPackageID := mustID(t, managementstate.NewModulePackageID)
 	instanceID := mustID(t, managementstate.NewModuleInstanceID)
 	var secretID managementstate.SecretID
 
@@ -49,7 +50,7 @@ func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate(t *testi
 		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: packageID, Role: managementstate.ModuleSourceRemote, Owner: "example", Repository: "modules", Ref: "main", Commit: "remote-commit", Version: "2.0.0", PackageSHA256: strings.Repeat("c", 64)}); err != nil {
 			return err
 		}
-		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: packageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "deployed-commit", Version: "1.9.0", PackageSHA256: strings.Repeat("d", 64)}); err != nil {
+		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: targetPackageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "deployed-commit", Version: "1.9.0", PackageSHA256: strings.Repeat("d", 64)}); err != nil {
 			return err
 		}
 		return change.SetDesiredState(targetID, managementstate.DesiredState{
@@ -68,7 +69,7 @@ func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate(t *testi
 	beforeDesired := beforeObserved.Targets[0].Desired
 
 	err = store.Change(ctx, func(change *managementstate.Change) error {
-		return change.RecordObservedState(targetID, managementstate.ObservedState{ObservedAt: "2026-08-16T08:00:00Z", Core: managementstate.CoreObservedState{SourceID: coreTarget, Version: "0.9.0", Running: true}, Modules: []managementstate.ModuleObservedState{{InstanceID: instanceID, PackageID: packageID, Version: "1.9.0", Running: false, Health: "stopped"}}})
+		return change.RecordObservedState(targetID, managementstate.ObservedState{ObservedAt: "2026-08-16T08:00:00Z", Core: managementstate.CoreObservedState{SourceID: coreTarget, Version: "0.9.0", Running: true}, Modules: []managementstate.ModuleObservedState{{InstanceID: instanceID, PackageID: targetPackageID, Version: "1.9.0", Running: false, Health: "stopped"}}})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +338,8 @@ func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState(t *testing.T) {
 	targetID := mustID(t, managementstate.NewTargetID)
 	oldCore := mustID(t, managementstate.NewCoreSourceID)
 	newCore := mustID(t, managementstate.NewCoreSourceID)
-	packageID := mustID(t, managementstate.NewModulePackageID)
+	installedPackageID := mustID(t, managementstate.NewModulePackageID)
+	remotePackageID := mustID(t, managementstate.NewModulePackageID)
 	if err := store.Change(ctx, func(change *managementstate.Change) error {
 		if err := change.CreateTarget(managementstate.TargetRegistration{ID: targetID, Address: "203.0.113.15", SSHUser: "dev"}); err != nil {
 			return err
@@ -345,7 +347,7 @@ func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState(t *testing.T) {
 		if err := change.PutCoreSource(managementstate.CoreSource{ID: oldCore, Role: managementstate.CoreSourceTarget, TargetID: targetID, Version: "old", SHA256: strings.Repeat("a", 64)}); err != nil {
 			return err
 		}
-		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: packageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "installed", Version: "1", PackageSHA256: strings.Repeat("b", 64)}); err != nil {
+		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: installedPackageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "installed", Version: "1", PackageSHA256: strings.Repeat("b", 64)}); err != nil {
 			return err
 		}
 		return nil
@@ -357,7 +359,7 @@ func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState(t *testing.T) {
 		if err := change.PutCoreSource(managementstate.CoreSource{ID: newCore, Role: managementstate.CoreSourceEmbedded, Version: "new", SHA256: strings.Repeat("c", 64)}); err != nil {
 			return err
 		}
-		return change.PutModuleSource(managementstate.ModuleSource{PackageID: packageID, Role: managementstate.ModuleSourceRemote, Owner: "owner", Repository: "repo", Ref: "main", Commit: "remote-new", Version: "2", PackageSHA256: strings.Repeat("d", 64)})
+		return change.PutModuleSource(managementstate.ModuleSource{PackageID: remotePackageID, Role: managementstate.ModuleSourceRemote, Owner: "owner", Repository: "repo", Ref: "main", Commit: "remote-new", Version: "2", PackageSHA256: strings.Repeat("d", 64)})
 	}); err != nil {
 		t.Fatal(err)
 	}
