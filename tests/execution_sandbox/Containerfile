@@ -19,36 +19,39 @@ RUN apt-get update \
       'AllowUsers dev' \
       'UsePAM no' \
       > /etc/ssh/sshd_config.d/90-vpsmith-sandbox.conf \
- && systemctl enable ssh.service \
- && cat > /usr/local/bin/vpsmith-sandbox-service <<'SH' \
-#!/bin/sh
-set -eu
-trap 'rm -f /run/vpsmith-sandbox-app.active' EXIT HUP INT TERM
-: > /run/vpsmith-sandbox-app.active
-while :; do sleep 60; done
-SH
-RUN chmod 0755 /usr/local/bin/vpsmith-sandbox-service \
- && cat > /etc/systemd/system/vpsmith-sandbox-app.service <<'UNIT' \
-[Unit]
-Description=VPSmith execution sandbox application
+ && systemctl enable ssh.service
 
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/vpsmith-sandbox-service
-Restart=no
-UNIT
-RUN cat > /usr/local/bin/podman <<'SH' \
-#!/bin/sh
-set -eu
-if [ "${1:-}" = exec ] && [ "${2:-}" = -- ] && [ "${3:-}" = vpsmith-sandbox-app ]; then
-  test -e /run/vpsmith-sandbox-app.active || exit 125
-  shift 3
-  exec "$@"
-fi
-printf 'unsupported sandbox podman invocation\n' >&2
-exit 64
-SH
-RUN chmod 0755 /usr/local/bin/podman \
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      "trap 'rm -f /run/vpsmith-sandbox-app.active' EXIT HUP INT TERM" \
+      ': > /run/vpsmith-sandbox-app.active' \
+      'while :; do sleep 60; done' \
+      > /usr/local/bin/vpsmith-sandbox-service \
+ && chmod 0755 /usr/local/bin/vpsmith-sandbox-service
+
+RUN printf '%s\n' \
+      '[Unit]' \
+      'Description=VPSmith execution sandbox application' \
+      '' \
+      '[Service]' \
+      'Type=simple' \
+      'ExecStart=/usr/local/bin/vpsmith-sandbox-service' \
+      'Restart=no' \
+      > /etc/systemd/system/vpsmith-sandbox-app.service
+
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      'if [ "${1:-}" = exec ] && [ "${2:-}" = -- ] && [ "${3:-}" = vpsmith-sandbox-app ]; then' \
+      '  test -e /run/vpsmith-sandbox-app.active || exit 125' \
+      '  shift 3' \
+      '  exec "$@"' \
+      'fi' \
+      'printf "unsupported sandbox podman invocation\\n" >&2' \
+      'exit 64' \
+      > /usr/local/bin/podman \
+ && chmod 0755 /usr/local/bin/podman \
  && systemctl disable systemd-resolved.service systemd-networkd.service systemd-networkd-wait-online.service 2>/dev/null || true
 
 STOPSIGNAL SIGRTMIN+3
