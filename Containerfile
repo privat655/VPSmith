@@ -5,7 +5,7 @@ ARG REVISION
 ARG SOURCE_DATE_EPOCH
 
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
 COPY build/cmd ./build/cmd
