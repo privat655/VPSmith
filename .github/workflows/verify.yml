@@ -12,47 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  format-export:
-    if: github.ref == 'refs/heads/agent/step-2-management-state'
-    permissions:
-      contents: write
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: true
-      - name: Normalize exact package identity tests and Go metadata
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('internal/managementstate/store_test.go')
-          text = p.read_text()
-          needle = 'packageID := mustID(t, managementstate.NewModulePackageID)\n\tinstanceID := mustID(t, managementstate.NewModuleInstanceID)'
-          replacement = 'packageID := mustID(t, managementstate.NewModulePackageID)\n\ttargetPackageID := mustID(t, managementstate.NewModulePackageID)\n\tinstanceID := mustID(t, managementstate.NewModuleInstanceID)'
-          text = text.replace(needle, replacement, 1)
-          text = text.replace('PackageID: packageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "deployed-commit"', 'PackageID: targetPackageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "deployed-commit"', 1)
-          text = text.replace('PackageID: packageID, Version: "1.9.0", Running: false', 'PackageID: targetPackageID, Version: "1.9.0", Running: false', 1)
-          marker = 'func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState'
-          head, tail = text.split(marker, 1)
-          tail = tail.replace('packageID := mustID(t, managementstate.NewModulePackageID)', 'installedPackageID := mustID(t, managementstate.NewModulePackageID)\n\tremotePackageID := mustID(t, managementstate.NewModulePackageID)', 1)
-          tail = tail.replace('PackageID: packageID, Role: managementstate.ModuleSourceTarget', 'PackageID: installedPackageID, Role: managementstate.ModuleSourceTarget', 1)
-          tail = tail.replace('PackageID: packageID, Role: managementstate.ModuleSourceRemote', 'PackageID: remotePackageID, Role: managementstate.ModuleSourceRemote', 1)
-          p.write_text(head + marker + tail)
-          PY
-          docker run --rm \
-            --volume "$PWD:/src" \
-            --workdir /src \
-            golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 \
-            sh -eu -c 'gofmt -w cmd internal build/cmd tests; go mod tidy'
-          if ! git diff --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add go.mod go.sum cmd internal build/cmd tests
-            git commit -m 'Normalize step 2 source identities and Go metadata'
-            git push origin HEAD:agent/step-2-management-state
-          fi
-
   go:
     runs-on: ubuntu-24.04
     steps:
