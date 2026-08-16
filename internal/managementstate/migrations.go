@@ -103,7 +103,7 @@ CREATE TABLE module_sources (
   base_commit TEXT NOT NULL DEFAULT '',
   version TEXT NOT NULL,
   package_sha256 TEXT NOT NULL,
-  PRIMARY KEY(package_id, role,target_id)
+  PRIMARY KEY(package_id, role, target_id)
 ) STRICT;
 CREATE TABLE secrets (
   id TEXT PRIMARY KEY,
@@ -139,6 +139,10 @@ CREATE TABLE backups (
   location_ref TEXT NOT NULL DEFAULT '',
   sha256 TEXT NOT NULL DEFAULT ''
 ) STRICT;
+CREATE TRIGGER core_sources_no_update BEFORE UPDATE ON core_sources BEGIN SELECT RAISE(ABORT, 'core source identity is immutable'); END;
+CREATE TRIGGER core_sources_no_delete BEFORE DELETE ON core_sources BEGIN SELECT RAISE(ABORT, 'core source identity is immutable'); END;
+CREATE TRIGGER module_sources_no_update BEFORE UPDATE ON module_sources BEGIN SELECT RAISE(ABORT, 'module package identity is immutable'); END;
+CREATE TRIGGER module_sources_no_delete BEFORE DELETE ON module_sources BEGIN SELECT RAISE(ABORT, 'module package identity is immutable'); END;
 CREATE TRIGGER execution_bundles_no_update BEFORE UPDATE ON execution_bundles BEGIN SELECT RAISE(ABORT, 'execution bundle history is immutable'); END;
 CREATE TRIGGER execution_bundles_no_delete BEFORE DELETE ON execution_bundles BEGIN SELECT RAISE(ABORT, 'execution bundle history is immutable'); END;
 CREATE TRIGGER execution_records_no_update BEFORE UPDATE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution record history is immutable'); END;
