@@ -27,6 +27,11 @@ FROM debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea
 ARG VERSION
 ARG REVISION
 
+# The slim runtime has no CA bundle before apt is usable. Bootstrap exactly the
+# Debian CA bundle from the already pinned bookworm builder, then refresh it
+# from the pinned Debian snapshot together with Git.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 RUN printf '%s\n' \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260713T000000Z bookworm main' \
       > /etc/apt/sources.list \
