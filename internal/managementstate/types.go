@@ -169,6 +169,7 @@ type ObservedState struct {
 	CloudInit        CloudInitObservedState         `json:"cloud_init"`
 	Core             CoreObservedState              `json:"core"`
 	Modules          []ModuleObservedState          `json:"modules,omitempty"`
+	PodmanNetworks   []NetworkObservedState         `json:"podman_networks,omitempty"`
 	LinkNetworks     []LinkNetworkObservedState     `json:"link_networks,omitempty"`
 	ManagedArtifacts []ManagedArtifactObservedState `json:"managed_artifacts,omitempty"`
 }
@@ -325,7 +326,6 @@ func validateDesired(value DesiredState) error {
 			if dependency.TargetModule == "" || strings.TrimSpace(dependency.InterfaceID) == "" || strings.TrimSpace(dependency.Consumer) == "" {
 				return fmt.Errorf("module %s has incomplete dependency", module.InstanceID)
 			}
-		}
 	}
 	return nil
 }
