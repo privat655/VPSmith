@@ -12,6 +12,23 @@ permissions:
   contents: read
 
 jobs:
+  format-export:
+    if: github.ref == 'refs/heads/agent/step-2-management-state'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Export formatted step-2 sources
+        run: |
+          docker run --rm \
+            --volume "$PWD:/src" \
+            --workdir /src \
+            golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 \
+            sh -eu -c 'gofmt -w cmd internal build/cmd tests; go mod tidy; tar -czf - go.mod go.sum cmd/vpsmith-studio/main.go internal/managementstate' \
+            | base64 -w0
+
   go:
     runs-on: ubuntu-24.04
     steps:
