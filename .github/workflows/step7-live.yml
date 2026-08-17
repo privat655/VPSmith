@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            cloud-image-utils cloud-init netcat-openbsd qemu-system-x86 qemu-utils
+            cloud-image-utils cloud-init openssh-client qemu-system-x86 qemu-utils
 
       - name: Build live verification driver
         run: |
@@ -92,19 +92,25 @@ jobs:
             -daemonize \
             -pidfile "$PWD/live/qemu.pid"
 
-      - name: Wait for SSH transport
+      - name: Wait for real SSH host key
         run: |
-          for attempt in $(seq 1 450); do
-            if nc -z 127.0.0.1 2222; then
+          for attempt in $(seq 1 180); do
+            if ssh-keyscan -T 5 -p 2222 -t ed25519 127.0.0.1 >live/out/ssh-keyscan.txt 2>live/out/ssh-keyscan.stderr \
+              && test -s live/out/ssh-keyscan.txt; then
+              cat live/out/ssh-keyscan.txt
               exit 0
             fi
-            if ! kill -0 "$(cat live/qemu.pid)" 2>/dev/null; then
-              echo 'QEMU exited before SSH became reachable' >&2
+            pid=$(cat live/qemu.pid 2>/dev/null || true)
+            if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+              echo 'QEMU exited before an SSH host key became reachable' >&2
               exit 1
+            fi
+            if [ $((attempt % 10)) -eq 0 ]; then
+              echo "waiting for real SSH host key (attempt $attempt)" >&2
             fi
             sleep 2
           done
-          echo 'SSH did not become reachable' >&2
+          echo 'SSH host key did not become reachable' >&2
           exit 1
 
       - name: Verify real TOFU and enrollment through VPSmith
@@ -138,16 +144,34 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Collect read-only VPSmith diagnostics
+        if: always()
+        run: |
+          if [ -f live/target-id ] && [ -x live/vpsmith-step7-live ]; then
+            target_id=$(cat live/target-id)
+            live/vpsmith-step7-live diagnose \
+              --state-dir "$PWD/live/state" \
+              --runtime-dir "$PWD/live/ssh-runtime" \
+              --target-id "$target_id" \
+              --address 127.0.0.1:2222 \
+              >live/out/diagnostics.json \
+              2>live/out/diagnostics.stderr || true
+          fi
+          tail -n 200 live/out/serial.log >live/out/serial-tail.log 2>/dev/null || true
+
       - name: Stop VM
         if: always()
         run: |
-          if [ -f live/qemu.pid ] && kill -0 "$(cat live/qemu.pid)" 2>/dev/null; then
-            kill "$(cat live/qemu.pid)" || true
-            for attempt in $(seq 1 20); do
-              kill -0 "$(cat live/qemu.pid)" 2>/dev/null || exit 0
-              sleep 1
-            done
-            kill -9 "$(cat live/qemu.pid)" 2>/dev/null || true
+          if [ -f live/qemu.pid ]; then
+            pid=$(cat live/qemu.pid 2>/dev/null || true)
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" || true
+              for attempt in $(seq 1 20); do
+                kill -0 "$pid" 2>/dev/null || exit 0
+                sleep 1
+              done
+              kill -9 "$pid" 2>/dev/null || true
+            fi
           fi
 
       - name: Upload public live-test evidence
