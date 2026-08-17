@@ -49,15 +49,18 @@ func (c *Coordinator) PrepareNewTarget(ctx context.Context, req NewTargetRequest
 	if err != nil {
 		return PreparedTarget{}, fmt.Errorf("read released Cloud-init template: %w", err)
 	}
-	id, err := managementstate.NewTargetID()
-	if err != nil {
-		return PreparedTarget{}, err
-	}
 	desired := managementstate.CloudInitDesiredState{
 		DefinitionVersion: source.Version,
 		Hostname:          req.Hostname,
 		Timezone:          req.Timezone,
 		Administrator:     req.Administrator,
+	}
+	if err := deployment.ValidateBootstrapDesired(desired); err != nil {
+		return PreparedTarget{}, fmt.Errorf("validate Cloud-init target values: %w", err)
+	}
+	id, err := managementstate.NewTargetID()
+	if err != nil {
+		return PreparedTarget{}, err
 	}
 	if err := c.state.Change(ctx, func(ch *managementstate.Change) error { return ch.CreatePendingTarget(id, req.Administrator) }); err != nil {
 		return PreparedTarget{}, err
