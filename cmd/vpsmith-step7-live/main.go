@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/privat655/VPSmith/internal/bootstrap"
@@ -161,6 +162,12 @@ func enroll(args []string) error {
 			break
 		}
 		reportRetry("enrollment", attempt, lastErr)
+		if attempt == 1 || attempt%3 == 0 {
+			marker, markerErr := cloudFinalFailure(ctx, gateway, id)
+			if markerErr == nil && marker != "" {
+				return fmt.Errorf("cloud-init Primary Host Hardening failed: %s", marker)
+			}
+		}
 		if err := sleepContext(ctx, 3*time.Second); err != nil {
 			return fmt.Errorf("enrollment did not become valid: %v: %w", lastErr, err)
 		}
@@ -172,6 +179,28 @@ func enroll(args []string) error {
 		HostKey targetgateway.HostKeyObservation `json:"host_key"`
 		Result  targetgateway.EnrollmentResult   `json:"enrollment"`
 	}{HostKey: observation, Result: result})
+}
+
+func cloudFinalFailure(ctx context.Context, gateway *targetgateway.Gateway, id managementstate.TargetID) (string, error) {
+	var buffer bytes.Buffer
+	err := gateway.Logs(ctx, id, targetgateway.LogRequest{Kind: targetgateway.LogJournalUnit, Name: "cloud-final.service", Scope: "system", Lines: 80}, func(chunk targetgateway.LogChunk) error {
+		_, writeErr := buffer.Write(chunk.Data)
+		return writeErr
+	})
+	if err != nil {
+		return "", err
+	}
+	return primaryFailureMarker(buffer.String()), nil
+}
+
+func primaryFailureMarker(logText string) string {
+	const prefix = "vpsmith-primary-failed stage="
+	for _, line := range strings.Split(logText, "\n") {
+		if index := strings.Index(line, prefix); index >= 0 {
+			return strings.TrimSpace(line[index:])
+		}
+	}
+	return ""
 }
 
 type liveDiagnostics struct {
