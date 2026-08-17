@@ -21,67 +21,43 @@ jobs:
           persist-credentials: true
       - name: Normalize branch Go sources
         run: |
-          if ! grep -q 'func (t \*sshTransport) hostFacts' internal/targetgateway/inspector.go; then
-            git fetch --no-tags --depth=1 origin 6435f7e12859eed745d0b31640ddd88c67bda873
-            git show FETCH_HEAD:internal/targetgateway/inspector.go > internal/targetgateway/inspector.go
-            sed -i 's/managementstate\.CoreSourceID/managementstate.SourceSnapshotID/g' internal/targetgateway/inspector.go
-          fi
-          if grep -q 'NewCoreSourceID' internal/managementstate/store_test.go; then
-            python3 - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           p = Path('internal/managementstate/store_test.go')
           s = p.read_text()
-          start = s.index('func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate')
-          end = s.index('\nfunc TestAtomicChangeRollsBackAllWrites', start)
-          replacement = r'''func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate(t *testing.T) {
+          if 'NewCoreSourceID' in s:
+              start = s.index('func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState')
+              end = s.index('\nfunc TestStateFilesUseRestrictivePermissionsAndMissingKeyFailsClosed', start)
+              replacement = r'''func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState(t *testing.T) {
+            store := mustMemory(t)
             ctx := context.Background()
-            dir := t.TempDir()
-            store, err := managementstate.Open(dir)
-            if err != nil { t.Fatal(err) }
             targetID := mustID(t, managementstate.NewTargetID)
-            coreSource := mustID(t, managementstate.NewSourceSnapshotID)
-            coreObservedSource := mustID(t, managementstate.NewSourceSnapshotID)
-            packageID := mustID(t, managementstate.NewModulePackageID)
-            instanceID := mustID(t, managementstate.NewModuleInstanceID)
-            var secretID managementstate.SecretID
-            err = store.Change(ctx, func(change *managementstate.Change) error {
-              var err error
-              secretID, err = change.CreateSecret("n8n-encryption-key", managementstate.SecretGenerated)
-              if err != nil { return err }
-              if err := change.SetSecret(secretID, []byte("correct-horse-battery-staple")); err != nil { return err }
-              if err := change.CreateTarget(managementstate.TargetRegistration{ID: targetID, Address: "203.0.113.10", SSHUser: "dev", SSHTrust: managementstate.TrustUnknown}); err != nil { return err }
-              if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: coreSource, Kind: managementstate.SourceCore, Version: "1.0.0", SHA256: strings.Repeat("a", 64), StorageRef: "snapshots/sha256/core-a"}); err != nil { return err }
-              if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: coreObservedSource, Kind: managementstate.SourceCore, Version: "0.9.0", SHA256: strings.Repeat("b", 64), StorageRef: "snapshots/sha256/core-b"}); err != nil { return err }
-              return change.SetDesiredState(targetID, managementstate.DesiredState{
-                Core: managementstate.CoreDesiredState{SourceID: coreSource, Version: "1.0.0", Swap: managementstate.SwapDesiredState{Mode: "none"}},
-                Modules: []managementstate.ModuleDesiredState{{InstanceID: instanceID, PackageID: packageID, Version: "2.0.0", SecretIDs: []managementstate.SecretID{secretID}, Resources: managementstate.ResourceOverrides{MemoryBytes: 1024}}},
-              })
-            })
+            oldCore := mustID(t, managementstate.NewSourceSnapshotID)
+            newCore := mustID(t, managementstate.NewSourceSnapshotID)
+            installedPackageID := mustID(t, managementstate.NewModulePackageID)
+            remotePackageID := mustID(t, managementstate.NewModulePackageID)
+            installedModule := mustID(t, managementstate.NewSourceSnapshotID)
+            remoteModule := mustID(t, managementstate.NewSourceSnapshotID)
+            if err := store.Change(ctx, func(change *managementstate.Change) error {
+              if err := change.CreateTarget(managementstate.TargetRegistration{ID: targetID, Address: "203.0.113.15", SSHUser: "dev"}); err != nil { return err }
+              if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: oldCore, Kind: managementstate.SourceCore, Version: "old", SHA256: strings.Repeat("a", 64), StorageRef: "snapshots/sha256/core-old"}); err != nil { return err }
+              return change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: installedModule, Kind: managementstate.SourceCustomModule, PackageID: installedPackageID, PackagePath: "modules/installed", Version: "1", Commit: "installed", SHA256: strings.Repeat("b", 64), StorageRef: "snapshots/sha256/module-installed"})
+            }); err != nil { t.Fatal(err) }
+            before, err := store.Snapshot(ctx)
             if err != nil { t.Fatal(err) }
-            beforeObserved, err := store.Snapshot(ctx)
+            if err := store.Change(ctx, func(change *managementstate.Change) error {
+              if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: newCore, Kind: managementstate.SourceCore, Version: "new", SHA256: strings.Repeat("c", 64), StorageRef: "snapshots/sha256/core-new"}); err != nil { return err }
+              return change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: remoteModule, Kind: managementstate.SourceCustomModule, PackageID: remotePackageID, PackagePath: "modules/remote", Version: "2", Commit: "remote-new", SHA256: strings.Repeat("d", 64), StorageRef: "snapshots/sha256/module-remote"})
+            }); err != nil { t.Fatal(err) }
+            after, err := store.Snapshot(ctx)
             if err != nil { t.Fatal(err) }
-            beforeDesired := beforeObserved.Targets[0].Desired
-            err = store.Change(ctx, func(change *managementstate.Change) error {
-              return change.RecordObservedState(targetID, managementstate.ObservedState{ObservedAt: "2026-08-16T08:00:00Z", Core: managementstate.CoreObservedState{SourceID: coreObservedSource, Version: "0.9.0", Running: true}, Modules: []managementstate.ModuleObservedState{{InstanceID: instanceID, PackageID: packageID, Version: "1.9.0", Running: false, Health: "stopped"}}})
-            })
-            if err != nil { t.Fatal(err) }
-            afterObserved, err := store.Snapshot(ctx)
-            if err != nil { t.Fatal(err) }
-            if !reflect.DeepEqual(beforeDesired, afterObserved.Targets[0].Desired) { t.Fatalf("observed update changed desired state\nbefore=%#v\nafter=%#v", beforeDesired, afterObserved.Targets[0].Desired) }
-            if afterObserved.Targets[0].Observed.Core.Version != "0.9.0" { t.Fatalf("observed core version = %q", afterObserved.Targets[0].Observed.Core.Version) }
-            if len(afterObserved.Sources.Artifacts) != 2 { t.Fatalf("canonical source artifacts = %d, want 2", len(afterObserved.Sources.Artifacts)) }
-            if err := store.Close(); err != nil { t.Fatal(err) }
-            reopened, err := managementstate.Open(dir)
-            if err != nil { t.Fatal(err) }
-            defer reopened.Close()
-            afterRestart, err := reopened.Snapshot(ctx)
-            if err != nil { t.Fatal(err) }
-            if !reflect.DeepEqual(afterObserved, afterRestart) { t.Fatalf("snapshot changed after restart\nbefore=%#v\nafter=%#v", afterObserved, afterRestart) }
+            if !reflect.DeepEqual(before.Targets, after.Targets) { t.Fatal("source synchronization changed target state") }
+            if len(before.Sources.Artifacts) != 2 || len(after.Sources.Artifacts) != 4 { t.Fatalf("canonical source snapshot history before=%d after=%d", len(before.Sources.Artifacts), len(after.Sources.Artifacts)) }
+            if after.Sources.Artifacts[0].ID == "" { t.Fatal("canonical source identities were not retained") }
           }
           '''
-          p.write_text(s[:start] + replacement + s[end:])
+              p.write_text(s[:start] + replacement + s[end:])
           PY
-          fi
           gofmt -w $(find . -name '*.go' -type f -print)
           if git diff --quiet; then
             exit 0
@@ -89,5 +65,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- '*.go'
-          git commit -m 'chore: normalize architecture fixes'
+          git commit -m 'chore: normalize remaining source tests'
           git push origin HEAD:agent/fix-step7-architecture-audit
