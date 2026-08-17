@@ -11,6 +11,7 @@ type PrimaryHardeningObservedState struct {
 	SSHValues                 map[string]string `json:"ssh_values,omitempty"`
 	UFWActive                 bool              `json:"ufw_active"`
 	UFWDefaultIncoming        string            `json:"ufw_default_incoming,omitempty"`
+	UFWDefaultOutgoing        string            `json:"ufw_default_outgoing,omitempty"`
 	UFWDefaultRouted          string            `json:"ufw_default_routed,omitempty"`
 	UFWLoggingLow             bool              `json:"ufw_logging_low"`
 	UFWUnexpectedPublicAllow  bool              `json:"ufw_unexpected_public_allow"`
@@ -74,8 +75,8 @@ type ContainerObservedState struct {
 
 type NetworkObservedState struct {
 	Name         string   `json:"name"`
-	Present      bool     `json:"present"`
 	Internal     bool     `json:"internal"`
+	Present      bool     `json:"present"`
 	Subnets      []string `json:"subnets,omitempty"`
 	Relationship string   `json:"relationship,omitempty"`
 	Members      []string `json:"members,omitempty"`
