@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,7 +27,7 @@ func (rejectingRegistry) Resolve(context.Context, string) (string, error) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal(errors.New("usage: vpsmith-step7-live prepare|enroll"))
+		fatal(errors.New("usage: vpsmith-step7-live prepare|enroll|diagnose"))
 	}
 	var err error
 	switch os.Args[1] {
@@ -34,6 +35,8 @@ func main() {
 		err = prepare(os.Args[2:])
 	case "enroll":
 		err = enroll(os.Args[2:])
+	case "diagnose":
+		err = diagnose(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -134,26 +137,30 @@ func enroll(args []string) error {
 	}
 
 	var observation targetgateway.HostKeyObservation
-	for {
+	for attempt := 1; ; attempt++ {
 		observation, err = gateway.ObserveHostKey(ctx, id)
 		if err == nil {
 			break
 		}
+		reportRetry("SSH host-key observation", attempt, err)
 		if err := sleepContext(ctx, 2*time.Second); err != nil {
 			return fmt.Errorf("observe fresh target host key: %w", err)
 		}
 	}
+	fmt.Fprintf(os.Stderr, "SSH host key observed: %s\n", observation.Fingerprint)
 	if err := gateway.ConfirmHostKey(ctx, id, observation); err != nil {
 		return fmt.Errorf("confirm observed host key: %w", err)
 	}
+	fmt.Fprintln(os.Stderr, "SSH host key confirmed; waiting for Cloud-init and Primary Host Hardening")
 
 	var result targetgateway.EnrollmentResult
 	var lastErr error
-	for {
+	for attempt := 1; ; attempt++ {
 		result, lastErr = gateway.Enroll(ctx, id)
 		if lastErr == nil {
 			break
 		}
+		reportRetry("enrollment", attempt, lastErr)
 		if err := sleepContext(ctx, 3*time.Second); err != nil {
 			return fmt.Errorf("enrollment did not become valid: %v: %w", lastErr, err)
 		}
@@ -165,6 +172,72 @@ func enroll(args []string) error {
 		HostKey targetgateway.HostKeyObservation `json:"host_key"`
 		Result  targetgateway.EnrollmentResult   `json:"enrollment"`
 	}{HostKey: observation, Result: result})
+}
+
+type liveDiagnostics struct {
+	Observed     *managementstate.ObservedState `json:"observed,omitempty"`
+	InspectError string                         `json:"inspect_error,omitempty"`
+	Logs         map[string]string              `json:"logs,omitempty"`
+	LogErrors    map[string]string              `json:"log_errors,omitempty"`
+}
+
+func diagnose(args []string) error {
+	flags := flag.NewFlagSet("diagnose", flag.ContinueOnError)
+	stateDir := flags.String("state-dir", "", "management-state directory")
+	runtimeDir := flags.String("runtime-dir", "", "SSH runtime directory")
+	targetID := flags.String("target-id", "", "target id")
+	address := flags.String("address", "", "host:port address")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *stateDir == "" || *runtimeDir == "" || *targetID == "" || *address == "" {
+		return errors.New("state-dir, runtime-dir, target-id, and address are required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	state, gateway, closeFn, err := targetStack(*stateDir, *runtimeDir)
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+	id := managementstate.TargetID(*targetID)
+	if err := state.Change(ctx, func(ch *managementstate.Change) error { return ch.SetTargetAddress(id, *address) }); err != nil {
+		return err
+	}
+
+	diagnostics := liveDiagnostics{Logs: map[string]string{}, LogErrors: map[string]string{}}
+	observed, inspectErr := gateway.Inspect(ctx, id)
+	if inspectErr != nil {
+		diagnostics.InspectError = inspectErr.Error()
+	} else {
+		diagnostics.Observed = &observed
+	}
+	for _, unit := range []string{"cloud-final.service", "fail2ban.service"} {
+		var buffer bytes.Buffer
+		err := gateway.Logs(ctx, id, targetgateway.LogRequest{Kind: targetgateway.LogJournalUnit, Name: unit, Scope: "system", Lines: 200}, func(chunk targetgateway.LogChunk) error {
+			_, writeErr := buffer.Write(chunk.Data)
+			return writeErr
+		})
+		if err != nil {
+			diagnostics.LogErrors[unit] = err.Error()
+			continue
+		}
+		diagnostics.Logs[unit] = buffer.String()
+	}
+	if len(diagnostics.Logs) == 0 {
+		diagnostics.Logs = nil
+	}
+	if len(diagnostics.LogErrors) == 0 {
+		diagnostics.LogErrors = nil
+	}
+	return json.NewEncoder(os.Stdout).Encode(diagnostics)
+}
+
+func reportRetry(stage string, attempt int, err error) {
+	if attempt == 1 || attempt%10 == 0 {
+		fmt.Fprintf(os.Stderr, "%s not ready (attempt %d): %v\n", stage, attempt, err)
+	}
 }
 
 func targetStack(stateDir, runtimeDir string) (*managementstate.Store, *targetgateway.Gateway, func(), error) {
