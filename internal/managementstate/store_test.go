@@ -322,51 +322,47 @@ func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState(t *testing.T) {
 	store := mustMemory(t)
 	ctx := context.Background()
 	targetID := mustID(t, managementstate.NewTargetID)
-	oldCore := mustID(t, managementstate.NewCoreSourceID)
-	newCore := mustID(t, managementstate.NewCoreSourceID)
+	oldCore := mustID(t, managementstate.NewSourceSnapshotID)
+	newCore := mustID(t, managementstate.NewSourceSnapshotID)
 	installedPackageID := mustID(t, managementstate.NewModulePackageID)
 	remotePackageID := mustID(t, managementstate.NewModulePackageID)
+	installedModule := mustID(t, managementstate.NewSourceSnapshotID)
+	remoteModule := mustID(t, managementstate.NewSourceSnapshotID)
 	if err := store.Change(ctx, func(change *managementstate.Change) error {
 		if err := change.CreateTarget(managementstate.TargetRegistration{ID: targetID, Address: "203.0.113.15", SSHUser: "dev"}); err != nil {
 			return err
 		}
-		if err := change.PutCoreSource(managementstate.CoreSource{ID: oldCore, Role: managementstate.CoreSourceTarget, TargetID: targetID, Version: "old", SHA256: strings.Repeat("a", 64)}); err != nil {
+		if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: oldCore, Kind: managementstate.SourceCore, Version: "old", SHA256: strings.Repeat("a", 64), StorageRef: "snapshots/sha256/core-old"}); err != nil {
 			return err
 		}
-		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: installedPackageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "installed", Version: "1", PackageSHA256: strings.Repeat("b", 64)}); err != nil {
-			return err
-		}
-		return nil
+		return change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: installedModule, Kind: managementstate.SourceCustomModule, PackageID: installedPackageID, PackagePath: "modules/installed", Version: "1", Commit: "installed", SHA256: strings.Repeat("b", 64), StorageRef: "snapshots/sha256/module-installed"})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := store.Snapshot(ctx)
+	before, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.Change(ctx, func(change *managementstate.Change) error {
-		if err := change.PutCoreSource(managementstate.CoreSource{ID: newCore, Role: managementstate.CoreSourceEmbedded, Version: "new", SHA256: strings.Repeat("c", 64)}); err != nil {
+		if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: newCore, Kind: managementstate.SourceCore, Version: "new", SHA256: strings.Repeat("c", 64), StorageRef: "snapshots/sha256/core-new"}); err != nil {
 			return err
 		}
-		return change.PutModuleSource(managementstate.ModuleSource{PackageID: remotePackageID, Role: managementstate.ModuleSourceRemote, Owner: "owner", Repository: "repo", Ref: "main", Commit: "remote-new", Version: "2", PackageSHA256: strings.Repeat("d", 64)})
+		return change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: remoteModule, Kind: managementstate.SourceCustomModule, PackageID: remotePackageID, PackagePath: "modules/remote", Version: "2", Commit: "remote-new", SHA256: strings.Repeat("d", 64), StorageRef: "snapshots/sha256/module-remote"})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := store.Snapshot(ctx)
+	after, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(before.Targets, after.Targets) {
 		t.Fatal("source synchronization changed target state")
 	}
-	var targetCore managementstate.CoreSourceID
-	var targetCommit string
-	for _, source := range after.CoreSources {
-		if source.Role == managementstate.CoreSourceTarget {
-			targetCore = source.ID
-		}
+	if len(before.Sources.Artifacts) != 2 || len(after.Sources.Artifacts) != 4 {
+		t.Fatalf("canonical source snapshot history before=%d after=%d", len(before.Sources.Artifacts), len(after.Sources.Artifacts))
 	}
-	for _, source := range after.ModuleSources {
-		if source.Role == managementstate.ModuleSourceTarget {
-			targetCommit = source.Commit
-		}
-	}
-	if targetCore != oldCore || targetCommit != "installed" {
-		t.Fatal("source synchronization changed target source identities")
+	if after.Sources.Artifacts[0].ID == "" {
+		t.Fatal("canonical source identities were not retained")
 	}
 }
 
