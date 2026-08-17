@@ -28,7 +28,7 @@ func validPrimaryHardening() PrimaryHardeningFacts {
 		"x11forwarding": "no", "allowagentforwarding": "no", "allowtcpforwarding": "no",
 		"allowstreamlocalforwarding": "no", "permittunnel": "no", "gatewayports": "no",
 		"permituserenvironment": "no", "compression": "no", "loglevel": "verbose",
-	}, UFWActive: true, UFWDefaultIncoming: "deny", UFWDefaultRouted: "deny", UFWLoggingLow: true,
+	}, UFWActive: true, UFWDefaultIncoming: "deny", UFWDefaultOutgoing: "allow", UFWDefaultRouted: "deny", UFWLoggingLow: true,
 		UFWAllowedPublicTCPPorts: []int{443, 22, 80}, Fail2banSSHActive: true, Fail2banRecidiveActive: true,
 		UnattendedUpgradesEnabled: true, AutomaticRebootDisabled: true}
 }
@@ -112,6 +112,15 @@ func TestEnrollRejectsUnlockedRootOrUnexpectedFirewallAllow(t *testing.T) {
 	}
 }
 
+func TestEnrollRejectsWrongOutgoingUFWDefault(t *testing.T) {
+	facts := validPrimaryHardening()
+	facts.UFWDefaultOutgoing = "deny"
+	gateway, ctx := enrollmentGateway(t, enrolledObserved(), facts)
+	if _, err := gateway.Enroll(ctx, "target-a"); err == nil {
+		t.Fatal("wrong outgoing UFW default accepted")
+	}
+}
+
 func TestEnrollRejectsMissingUFWLoggingOrRecidive(t *testing.T) {
 	facts := validPrimaryHardening()
 	facts.UFWLoggingLow = false
@@ -166,7 +175,7 @@ func TestPrimaryHardeningInspectionUsesReadOnlySudoAndCompleteEffectiveProbe(t *
 		t.Fatalf("runner call = %s %#v", runner.name, runner.args)
 	}
 	remoteCommand := runner.args[len(runner.args)-1]
-	for _, want := range []string{"sudo -n sh -eu -c", "getent shadow root", "root_locked", "user='", "authenticationmethods", "logingracetime", "maxauthtries", "maxsessions", "maxstartups", "compression", "loglevel", "ufw_logging_low", "ufw_unexpected_allow", "fail2ban-client status recidive"} {
+	for _, want := range []string{"sudo -n sh -eu -c", "getent shadow root", "root_locked", "user='", "authenticationmethods", "logingracetime", "maxauthtries", "maxsessions", "maxstartups", "compression", "loglevel", "ufw_defaults", "ufw_forwarding", "ufw_logging_low", "ufw_unexpected_allow", "fail2ban-client status recidive"} {
 		if !strings.Contains(remoteCommand, want) {
 			t.Fatalf("primary hardening probe missing %q: %q", want, remoteCommand)
 		}
