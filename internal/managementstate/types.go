@@ -85,6 +85,9 @@ type Target struct {
 type CloudInitDesiredState struct {
 	DefinitionVersion string `json:"definition_version,omitempty"`
 	DefinitionSHA256  string `json:"definition_sha256,omitempty"`
+	Hostname          string `json:"hostname,omitempty"`
+	Timezone          string `json:"timezone,omitempty"`
+	Administrator     string `json:"administrator,omitempty"`
 }
 
 type CoreDesiredState struct {
@@ -270,39 +273,21 @@ type Snapshot struct {
 }
 
 func (s *Snapshot) normalize() {
-	if s.Targets == nil {
-		s.Targets = []Target{}
-	}
-	if s.CoreSources == nil {
-		s.CoreSources = []CoreSource{}
-	}
-	if s.ModuleSources == nil {
-		s.ModuleSources = []ModuleSource{}
-	}
-	if s.Secrets == nil {
-		s.Secrets = []SecretMetadata{}
-	}
-	if s.ExecutionBundles == nil {
-		s.ExecutionBundles = []ExecutionBundleMetadata{}
-	}
-	if s.ExecutionRecords == nil {
-		s.ExecutionRecords = []ExecutionRecordMetadata{}
-	}
-	if s.Backups == nil {
-		s.Backups = []BackupArtifactMetadata{}
-	}
+	if s.Targets == nil { s.Targets = []Target{} }
+	if s.CoreSources == nil { s.CoreSources = []CoreSource{} }
+	if s.ModuleSources == nil { s.ModuleSources = []ModuleSource{} }
+	if s.Secrets == nil { s.Secrets = []SecretMetadata{} }
+	if s.ExecutionBundles == nil { s.ExecutionBundles = []ExecutionBundleMetadata{} }
+	if s.ExecutionRecords == nil { s.ExecutionRecords = []ExecutionRecordMetadata{} }
+	if s.Backups == nil { s.Backups = []BackupArtifactMetadata{} }
 	for i := range s.Targets {
-		sort.Slice(s.Targets[i].Desired.Modules, func(a, b int) bool {
-			return s.Targets[i].Desired.Modules[a].InstanceID < s.Targets[i].Desired.Modules[b].InstanceID
-		})
+		sort.Slice(s.Targets[i].Desired.Modules, func(a, b int) bool { return s.Targets[i].Desired.Modules[a].InstanceID < s.Targets[i].Desired.Modules[b].InstanceID })
 		NormalizeObservedState(&s.Targets[i].Observed)
 	}
 	sort.Slice(s.Targets, func(i, j int) bool { return s.Targets[i].ID < s.Targets[j].ID })
 	sort.Slice(s.CoreSources, func(i, j int) bool { return s.CoreSources[i].ID < s.CoreSources[j].ID })
 	sort.Slice(s.ModuleSources, func(i, j int) bool {
-		if s.ModuleSources[i].PackageID == s.ModuleSources[j].PackageID {
-			return s.ModuleSources[i].Role < s.ModuleSources[j].Role
-		}
+		if s.ModuleSources[i].PackageID == s.ModuleSources[j].PackageID { return s.ModuleSources[i].Role < s.ModuleSources[j].Role }
 		return s.ModuleSources[i].PackageID < s.ModuleSources[j].PackageID
 	})
 	sort.Slice(s.Secrets, func(i, j int) bool { return s.Secrets[i].ID < s.Secrets[j].ID })
@@ -312,19 +297,18 @@ func (s *Snapshot) normalize() {
 }
 
 func validateDesired(value DesiredState) error {
+	if value.CloudInit.DefinitionVersion != "" {
+		if strings.TrimSpace(value.CloudInit.Hostname) == "" || strings.TrimSpace(value.CloudInit.Timezone) == "" || strings.TrimSpace(value.CloudInit.Administrator) == "" {
+			return errors.New("cloud-init desired state requires hostname, timezone, and administrator")
+		}
+	}
 	seen := map[ModuleInstanceID]struct{}{}
 	for _, module := range value.Modules {
-		if module.InstanceID == "" || module.PackageID == "" || strings.TrimSpace(module.Version) == "" {
-			return errors.New("module desired state requires instance id, package id, and version")
-		}
-		if _, ok := seen[module.InstanceID]; ok {
-			return fmt.Errorf("duplicate module instance %s", module.InstanceID)
-		}
+		if module.InstanceID == "" || module.PackageID == "" || strings.TrimSpace(module.Version) == "" { return errors.New("module desired state requires instance id, package id, and version") }
+		if _, ok := seen[module.InstanceID]; ok { return fmt.Errorf("duplicate module instance %s", module.InstanceID) }
 		seen[module.InstanceID] = struct{}{}
 		for _, dependency := range module.Dependencies {
-			if dependency.TargetModule == "" || strings.TrimSpace(dependency.InterfaceID) == "" || strings.TrimSpace(dependency.Consumer) == "" {
-				return fmt.Errorf("module %s has incomplete dependency", module.InstanceID)
-			}
+			if dependency.TargetModule == "" || strings.TrimSpace(dependency.InterfaceID) == "" || strings.TrimSpace(dependency.Consumer) == "" { return fmt.Errorf("module %s has incomplete dependency", module.InstanceID) }
 		}
 	}
 	return nil
@@ -343,8 +327,6 @@ func nowUTC() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
 func marshalDomain(value any) ([]byte, error) {
 	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("encode management state: %w", err)
-	}
+	if err != nil { return nil, fmt.Errorf("encode management state: %w", err) }
 	return data, nil
 }
