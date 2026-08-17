@@ -38,6 +38,7 @@ jobs:
 
       - name: Generate real VPSmith Cloud-init and target identity
         run: |
+          set -o pipefail
           live/vpsmith-step7-live prepare \
             --state-dir "$PWD/live/state" \
             --sources-dir "$PWD/live/sources" \
@@ -115,13 +116,14 @@ jobs:
 
       - name: Verify real TOFU and enrollment through VPSmith
         run: |
+          set -o pipefail
           target_id=$(cat live/target-id)
           live/vpsmith-step7-live enroll \
             --state-dir "$PWD/live/state" \
             --runtime-dir "$PWD/live/ssh-runtime" \
             --target-id "$target_id" \
             --address 127.0.0.1:2222 \
-            --timeout 25m \
+            --timeout 10m \
             2> >(tee live/out/enroll.stderr >&2) \
             | tee live/out/enrollment.json
 
