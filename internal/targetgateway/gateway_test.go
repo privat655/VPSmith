@@ -303,7 +303,7 @@ func TestLogsAreBoundedDirectAndDoNotChangePersistedOrRemoteState(t *testing.T) 
 	}
 }
 
-func TestGatewayHasNoArbitraryCommandInterface(t *testing.T) {
+func TestGatewayExposesOnlyApprovedOperations(t *testing.T) {
 	allowed := map[string]bool{
 		"EnsureIdentity": true,
 		"ObserveHostKey": true,
@@ -311,12 +311,13 @@ func TestGatewayHasNoArbitraryCommandInterface(t *testing.T) {
 		"ResetTrust":     true,
 		"Inspect":        true,
 		"Logs":           true,
+		"Enroll":         true,
 	}
 	typeOfGateway := reflect.TypeOf(&Gateway{})
 	for i := 0; i < typeOfGateway.NumMethod(); i++ {
 		method := typeOfGateway.Method(i)
 		if !allowed[method.Name] {
-			t.Fatalf("unexpected public target gateway method %s exposes surface beyond step 4", method.Name)
+			t.Fatalf("unexpected public target gateway method %s", method.Name)
 		}
 	}
 	if typeOfGateway.NumMethod() != len(allowed) {

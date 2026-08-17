@@ -1,0 +1,159 @@
+name: step 7 live Cloud-init VM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: step7-live-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-cloud-init:
+    name: fresh Ubuntu VM / Cloud-init / TOFU / enrollment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      UBUNTU_IMAGE_URL: https://cloud-images.ubuntu.com/releases/noble/release-20260725/ubuntu-24.04-server-cloudimg-amd64.img
+      UBUNTU_IMAGE_SHA256: d1940f7d69d343355e183dff1e08a59852d32e7309baa7a4bad8365b11b005ac
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install VM and Cloud-init tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            cloud-image-utils cloud-init netcat-openbsd qemu-system-x86 qemu-utils
+
+      - name: Build live verification driver
+        run: |
+          mkdir -p live/out live/state live/ssh-runtime
+          chmod 0700 live/state live/ssh-runtime
+          go build -o live/vpsmith-step7-live ./cmd/vpsmith-step7-live
+
+      - name: Generate real VPSmith Cloud-init and target identity
+        run: |
+          live/vpsmith-step7-live prepare \
+            --state-dir "$PWD/live/state" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --output "$PWD/live/out/user-data" \
+            --target-id-output "$PWD/live/target-id" \
+            --hostname vpsmith-step7 \
+            --timezone Etc/UTC \
+            --administrator vpsmith \
+            --version step7-live-v1 \
+            | tee live/out/prepare.json
+          test "$(wc -c < live/out/user-data)" -lt 16384
+          cloud-init schema --config-file live/out/user-data
+
+      - name: Download pinned Ubuntu 24.04 cloud image
+        run: |
+          curl --fail --location --retry 3 --output live/base.img "$UBUNTU_IMAGE_URL"
+          printf '%s  %s\n' "$UBUNTU_IMAGE_SHA256" live/base.img | sha256sum --check --strict
+          qemu-img create -f qcow2 -F qcow2 -b "$PWD/live/base.img" live/vm.qcow2
+          qemu-img resize live/vm.qcow2 8G
+
+      - name: Create NoCloud seed
+        run: |
+          cat > live/out/meta-data <<'EOF'
+          instance-id: vpsmith-step7-live
+          local-hostname: vpsmith-step7
+          EOF
+          cloud-localds live/seed.img live/out/user-data live/out/meta-data
+
+      - name: Boot fresh Ubuntu VM
+        run: |
+          accel=tcg
+          if [ -c /dev/kvm ]; then
+            sudo chmod 0666 /dev/kvm || true
+            if qemu-system-x86_64 -accel help | grep -qx kvm; then
+              accel=kvm
+            fi
+          fi
+          printf '%s\n' "$accel" | tee live/out/qemu-acceleration.txt
+          qemu-system-x86_64 \
+            -name vpsmith-step7-live \
+            -machine "q35,accel=$accel" \
+            -smp 2 \
+            -m 3072 \
+            -drive "if=virtio,format=qcow2,file=$PWD/live/vm.qcow2" \
+            -drive "if=virtio,format=raw,readonly=on,file=$PWD/live/seed.img" \
+            -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            -display none \
+            -monitor none \
+            -serial "file:$PWD/live/out/serial.log" \
+            -daemonize \
+            -pidfile "$PWD/live/qemu.pid"
+
+      - name: Wait for SSH transport
+        run: |
+          for attempt in $(seq 1 450); do
+            if nc -z 127.0.0.1 2222; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat live/qemu.pid)" 2>/dev/null; then
+              echo 'QEMU exited before SSH became reachable' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          echo 'SSH did not become reachable' >&2
+          exit 1
+
+      - name: Verify real TOFU and enrollment through VPSmith
+        run: |
+          target_id=$(cat live/target-id)
+          live/vpsmith-step7-live enroll \
+            --state-dir "$PWD/live/state" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --address 127.0.0.1:2222 \
+            --timeout 25m \
+            2> >(tee live/out/enroll.stderr >&2) \
+            | tee live/out/enrollment.json
+
+      - name: Write verification summary
+        if: success()
+        run: |
+          {
+            echo '## VPSmith Step 7 live verification'
+            echo
+            echo '- Fresh Ubuntu 24.04 VM booted from pinned cloud image.'
+            echo '- VPSmith generated the per-target SSH identity and Cloud-init.'
+            echo '- TOFU host-key observation and explicit confirmation succeeded.'
+            echo '- Strict-key SSH enrollment succeeded.'
+            echo '- Cloud-init status and effective Primary Host Hardening succeeded.'
+            echo '- Core remained absent, Modules remained absent, and swap remained zero.'
+            echo
+            echo '```json'
+            cat live/out/enrollment.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop VM
+        if: always()
+        run: |
+          if [ -f live/qemu.pid ] && kill -0 "$(cat live/qemu.pid)" 2>/dev/null; then
+            kill "$(cat live/qemu.pid)" || true
+            for attempt in $(seq 1 20); do
+              kill -0 "$(cat live/qemu.pid)" 2>/dev/null || exit 0
+              sleep 1
+            done
+            kill -9 "$(cat live/qemu.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload public live-test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: step7-live-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            live/out/

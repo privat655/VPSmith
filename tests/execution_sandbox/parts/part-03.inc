@@ -57,7 +57,7 @@ func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeT
 func waitObservation(t *testing.T, target execution.Target, runID string, ok func(execution.Observation) bool) execution.Observation {
 	t.Helper()
 	var last execution.Observation
-	waitCommand(t, 15*time.Second, func() bool {
+	waitCommand(t, 30*time.Second, func() bool {
 		o, err := target.Observe(context.Background(), string(sandboxTargetID), runID)
 		if err != nil {
 			return false

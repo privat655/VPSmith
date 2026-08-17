@@ -85,6 +85,9 @@ type Target struct {
 type CloudInitDesiredState struct {
 	DefinitionVersion string `json:"definition_version,omitempty"`
 	DefinitionSHA256  string `json:"definition_sha256,omitempty"`
+	Hostname          string `json:"hostname,omitempty"`
+	Timezone          string `json:"timezone,omitempty"`
+	Administrator     string `json:"administrator,omitempty"`
 }
 
 type CoreDesiredState struct {
