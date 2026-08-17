@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// This regression test closes the Step-2/Step-3 split-brain source model.
 func TestSnapshotUsesCanonicalSourceStateOnly(t *testing.T) {
 	store, err := NewMemory()
 	if err != nil {
