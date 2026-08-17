@@ -42,8 +42,12 @@ func main() {
 
 func run(args []string) error {
 	command := "serve"
-	if len(args) > 0 { command = args[0] }
-	if len(args) > 1 { return fmt.Errorf("unexpected arguments: %v", args[1:]) }
+	if len(args) > 0 {
+		command = args[0]
+	}
+	if len(args) > 1 {
+		return fmt.Errorf("unexpected arguments: %v", args[1:])
+	}
 	switch command {
 	case "serve":
 		return serve()
@@ -51,7 +55,9 @@ func run(args []string) error {
 		return healthcheck()
 	case "version":
 		identity, err := loadIdentity()
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(identity)
@@ -62,26 +68,38 @@ func run(args []string) error {
 
 func serve() error {
 	identity, err := loadIdentity()
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	for _, mount := range []struct{ name, path string }{
 		{name: "state", path: stateDir}, {name: "sources", path: sourcesDir}, {name: "backups", path: backupsDir},
 	} {
-		if err := requireWritableDirectory(mount.name, mount.path); err != nil { return err }
+		if err := requireWritableDirectory(mount.name, mount.path); err != nil {
+			return err
+		}
 	}
 
 	ctx := context.Background()
 	app, err := application.Open(ctx, application.Paths{
 		StateDir: stateDir, SourcesDir: sourcesDir, BackupsDir: backupsDir, EmbeddedRoot: embeddedRoot,
 	})
-	if err != nil { return fmt.Errorf("open VPSmith application: %w", err) }
+	if err != nil {
+		return fmt.Errorf("open VPSmith application: %w", err)
+	}
 	defer func() {
-		if err := app.Close(); err != nil { log.Printf("ERROR: close VPSmith application: %v", err) }
+		if err := app.Close(); err != nil {
+			log.Printf("ERROR: close VPSmith application: %v", err)
+		}
 	}()
 
 	listener, err := net.Listen("tcp4", listenAddress)
-	if err != nil { return fmt.Errorf("listen on %s: %w", listenAddress, err) }
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", listenAddress, err)
+	}
 	defer listener.Close()
-	if err := requireLoopbackListener(listener); err != nil { return err }
+	if err := requireLoopbackListener(listener); err != nil {
+		return err
+	}
 
 	server := &http.Server{
 		Handler: studio.Handler(identity, app), ReadHeaderTimeout: 5 * time.Second,
@@ -94,19 +112,25 @@ func serve() error {
 	log.Printf("VPSmith Studio %s listening on http://%s", identity.Version, listenAddress)
 	select {
 	case err := <-serveErr:
-		if errors.Is(err, http.ErrServerClosed) { return nil }
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return fmt.Errorf("serve VPSmith Studio: %w", err)
 	case <-shutdownContext.Done():
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := server.Shutdown(ctx); err != nil { return fmt.Errorf("shutdown VPSmith Studio: %w", err) }
+		if err := server.Shutdown(ctx); err != nil {
+			return fmt.Errorf("shutdown VPSmith Studio: %w", err)
+		}
 		return nil
 	}
 }
 
 func loadIdentity() (studio.BuildIdentity, error) {
 	info, err := releaseinfo.Load(embeddedRoot)
-	if err != nil { return studio.BuildIdentity{}, err }
+	if err != nil {
+		return studio.BuildIdentity{}, err
+	}
 	if info.Studio.Version != version {
 		return studio.BuildIdentity{}, fmt.Errorf("studio version mismatch: binary=%s manifest=%s", version, info.Studio.Version)
 	}
@@ -115,19 +139,31 @@ func loadIdentity() (studio.BuildIdentity, error) {
 
 func buildTime(epoch string) string {
 	seconds, err := strconv.ParseInt(epoch, 10, 64)
-	if err != nil || seconds <= 0 { return "" }
+	if err != nil || seconds <= 0 {
+		return ""
+	}
 	return time.Unix(seconds, 0).UTC().Format(time.RFC3339)
 }
 
 func requireWritableDirectory(name, path string) error {
 	info, err := os.Stat(path)
-	if err != nil { return fmt.Errorf("persistent %s directory %s is unavailable: %w", name, path, err) }
-	if !info.IsDir() { return fmt.Errorf("persistent %s path %s is not a directory", name, path) }
+	if err != nil {
+		return fmt.Errorf("persistent %s directory %s is unavailable: %w", name, path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("persistent %s path %s is not a directory", name, path)
+	}
 	probe, err := os.CreateTemp(path, ".vpsmith-write-check-*")
-	if err != nil { return fmt.Errorf("persistent %s directory %s must be writable: %w", name, path, err) }
+	if err != nil {
+		return fmt.Errorf("persistent %s directory %s must be writable: %w", name, path, err)
+	}
 	probePath := probe.Name()
-	if err := probe.Close(); err != nil { return fmt.Errorf("close persistent %s write probe: %w", name, err) }
-	if err := os.Remove(probePath); err != nil { return fmt.Errorf("remove persistent %s write probe %s: %w", name, filepath.Base(probePath), err) }
+	if err := probe.Close(); err != nil {
+		return fmt.Errorf("close persistent %s write probe: %w", name, err)
+	}
+	if err := os.Remove(probePath); err != nil {
+		return fmt.Errorf("remove persistent %s write probe %s: %w", name, filepath.Base(probePath), err)
+	}
 	return nil
 }
 
@@ -142,8 +178,12 @@ func requireLoopbackListener(listener net.Listener) error {
 func healthcheck() error {
 	client := &http.Client{Timeout: 2 * time.Second}
 	response, err := client.Get("http://" + listenAddress + "/healthz")
-	if err != nil { return fmt.Errorf("healthcheck request: %w", err) }
+	if err != nil {
+		return fmt.Errorf("healthcheck request: %w", err)
+	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK { return fmt.Errorf("healthcheck returned HTTP %d", response.StatusCode) }
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck returned HTTP %d", response.StatusCode)
+	}
 	return nil
 }

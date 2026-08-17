@@ -79,7 +79,9 @@ func Handler(identity BuildIdentity, applications ...TargetApplication) http.Han
 			return
 		}
 		id := managementstate.TargetID(request.PathValue("target"))
-		var input struct{ Address string `json:"address"` }
+		var input struct {
+			Address string `json:"address"`
+		}
 		if err := decodeJSON(request, &input); err != nil {
 			writeError(writer, http.StatusBadRequest, err)
 			return
@@ -170,9 +172,10 @@ func decodeJSON(request *http.Request, out any) error {
 // nilResponseWriter is used only for MaxBytesReader's optional overflow error
 // response. The route writes its own structured error after Decode returns.
 type nilResponseWriter struct{}
-func (nilResponseWriter) Header() http.Header { return make(http.Header) }
+
+func (nilResponseWriter) Header() http.Header       { return make(http.Header) }
 func (nilResponseWriter) Write([]byte) (int, error) { return 0, nil }
-func (nilResponseWriter) WriteHeader(int) {}
+func (nilResponseWriter) WriteHeader(int)           {}
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -200,12 +203,18 @@ func securityHeaders(next http.Handler) http.Handler {
 
 var startPage = template.Must(template.New("start").Funcs(template.FuncMap{
 	"shortSHA": func(value string) string {
-		if len(value) <= 16 { return value }
+		if len(value) <= 16 {
+			return value
+		}
 		return value[:16] + "…"
 	},
 	"builtAt": func(value string) string {
-		if value == "" { return "not set" }
-		if parsed, err := time.Parse(time.RFC3339, value); err == nil { return parsed.UTC().Format(time.RFC3339) }
+		if value == "" {
+			return "not set"
+		}
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+			return parsed.UTC().Format(time.RFC3339)
+		}
 		return value
 	},
 }).Parse(`<!doctype html>

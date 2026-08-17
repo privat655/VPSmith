@@ -23,12 +23,12 @@ import (
 // process. All paths must be absolute so the composition cannot silently use a
 // caller-dependent working directory.
 type Paths struct {
-	StateDir     string
-	SourcesDir   string
-	BackupsDir   string
-	EmbeddedRoot string
+	StateDir      string
+	SourcesDir    string
+	BackupsDir    string
+	EmbeddedRoot  string
 	SSHRuntimeDir string
-	BundlesDir   string
+	BundlesDir    string
 }
 
 // Application is the single production composition root for the Step 1-7
@@ -155,7 +155,7 @@ func (a *Application) Execute(ctx context.Context, targetID string, bundle execu
 	return a.executor.Execute(ctx, targetID, bundle)
 }
 
-func (a *Application) State() *managementstate.Store { return a.state }
+func (a *Application) State() *managementstate.Store   { return a.state }
 func (a *Application) Sources() *sourcelibrary.Library { return a.sources }
 func (a *Application) Gateway() *targetgateway.Gateway { return a.gateway }
-func (a *Application) Compiler() *deployment.Compiler { return a.compiler }
+func (a *Application) Compiler() *deployment.Compiler  { return a.compiler }
