@@ -39,10 +39,6 @@ func TestStudioRestartPreservesManagementState(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	before, err := store.Snapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +59,27 @@ func TestStudioRestartPreservesManagementState(t *testing.T) {
 		t.Fatalf("build studio: %v\n%s", err, output)
 	}
 
+	// The first real production start is allowed to import the immutable
+	// embedded release snapshots into the canonical Source Library. Restart
+	// preservation is therefore measured from the state after that startup,
+	// not from the pre-application database.
 	startAndStopStudio(t, binary, repo)
+	baselineStore, err := managementstate.Open(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := baselineStore.Snapshot(ctx)
+	if err != nil {
+		_ = baselineStore.Close()
+		t.Fatal(err)
+	}
+	if err := baselineStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Sources.Artifacts) == 0 {
+		t.Fatal("production Studio start did not import embedded source snapshots")
+	}
+
 	startAndStopStudio(t, binary, repo)
 
 	reopened, err := managementstate.Open(state)
