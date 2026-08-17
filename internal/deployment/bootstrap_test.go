@@ -42,7 +42,7 @@ func TestPrepareBootstrapProducesOnlyPrimaryCloudInit(t *testing.T) {
 	}
 	text := string(got.Bytes)
 	required := []string{
-		"ssh_deletekeys: true", "ssh_genkeytypes: [ed25519, rsa]",
+		"ssh_deletekeys: true", "ssh_genkeytypes: [ed25519, rsa]", "passwd -l root", "getent shadow root",
 		"PermitRootLogin no", "PasswordAuthentication no", "KbdInteractiveAuthentication no", "PubkeyAuthentication yes",
 		"AuthenticationMethods publickey", "PermitEmptyPasswords no", "LoginGraceTime 20", "MaxAuthTries 3", "MaxSessions 3", "MaxStartups 10:30:60",
 		"AllowAgentForwarding no", "AllowTcpForwarding no", "AllowStreamLocalForwarding no", "PermitTunnel no", "GatewayPorts no", "PermitUserEnvironment no",
@@ -65,8 +65,9 @@ func TestPrepareBootstrapProducesOnlyPrimaryCloudInit(t *testing.T) {
 			t.Errorf("forbidden responsibility %q", bad)
 		}
 	}
-	if !strings.Contains(text, req.SSHPublicKey) {
-		t.Error("public key missing")
+	keyFields := strings.Fields(req.SSHPublicKey)
+	if !strings.Contains(text, keyFields[0]+" "+keyFields[1]) {
+		t.Error("public key material missing")
 	}
 	if bytes.Contains(got.Bytes, []byte("OPENSSH PRIVATE KEY")) {
 		t.Error("private key leaked")
@@ -81,11 +82,15 @@ func TestPrepareBootstrapWritesSuccessOnlyAfterEffectiveValidation(t *testing.T)
 	}
 	text := string(artifact.Bytes)
 	clear := strings.Index(text, "rm -f /var/lib/vpsmith/cloud-init/status")
+	rootValidation := strings.Index(text, "getent shadow root")
 	lastValidation := strings.Index(text, "fail2ban-client status recidive")
 	success := strings.Index(text, "status=ok")
 	publish := strings.Index(text, "mv -f \"$tmp\" /var/lib/vpsmith/cloud-init/status")
-	if clear < 0 || lastValidation < 0 || success < 0 || publish < 0 || !(clear < lastValidation && lastValidation < success && success < publish) {
-		t.Fatalf("atomic status ordering is unsafe: clear=%d validation=%d success=%d publish=%d", clear, lastValidation, success, publish)
+	if clear < 0 || rootValidation < 0 || lastValidation < 0 || success < 0 || publish < 0 || !(clear < rootValidation && rootValidation < lastValidation && lastValidation < success && success < publish) {
+		t.Fatalf("atomic status ordering is unsafe: clear=%d root=%d validation=%d success=%d publish=%d", clear, rootValidation, lastValidation, success, publish)
+	}
+	if strings.Contains(text, "passwd -l root >/dev/null 2>&1 || true") {
+		t.Fatal("root password lock must fail closed")
 	}
 }
 
@@ -114,13 +119,21 @@ func TestPrepareBootstrapRejectsDesiredVersionDifferentFromFrozenSource(t *testi
 	}
 }
 
-func TestPrepareBootstrapRejectsUnsafeTimezoneScalar(t *testing.T) {
+func TestPrepareBootstrapRejectsUnsafeTargetScalars(t *testing.T) {
 	c := newCompiler(t, "docker.io/example/unused:1")
-	for _, timezone := range []string{"Etc/UTC #comment", "Etc/UTC:bad", "../UTC", "/Etc/UTC"} {
+	cases := []func(*BootstrapRequest){
+		func(req *BootstrapRequest) { req.Desired.Timezone = "Etc/UTC #comment" },
+		func(req *BootstrapRequest) { req.Desired.Timezone = "../UTC" },
+		func(req *BootstrapRequest) { req.Desired.Hostname = "Bad_Host" },
+		func(req *BootstrapRequest) { req.Desired.Hostname = "-host" },
+		func(req *BootstrapRequest) { req.Desired.Administrator = "root" },
+		func(req *BootstrapRequest) { req.Desired.Administrator = "Admin" },
+	}
+	for i, mutate := range cases {
 		req := testBootstrapRequest(t)
-		req.Desired.Timezone = timezone
+		mutate(&req)
 		if _, err := c.PrepareBootstrap(req); err == nil {
-			t.Fatalf("unsafe timezone %q accepted", timezone)
+			t.Fatalf("unsafe target scalar case %d accepted", i)
 		}
 	}
 }
