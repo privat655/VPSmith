@@ -38,7 +38,7 @@ func TestCurrentEmbeddedCloudInitReturnsVerifiedReleasedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(templateBytes), "#cloud-config\n") || !strings.Contains(string(templateBytes), "{{.SSHPublicKey}}") {
+	if !strings.HasPrefix(string(templateBytes), "#cloud-config\n") || !strings.Contains(string(templateBytes), "{{.SSHPublicKeyMaterial}}") {
 		t.Fatal("released Cloud-init source does not contain the canonical template")
 	}
 }
