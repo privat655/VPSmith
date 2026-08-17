@@ -78,7 +78,7 @@ func validateEnrollment(observed managementstate.ObservedState, desired manageme
 	}
 	ports := append([]int(nil), facts.UFWAllowedPublicTCPPorts...)
 	sort.Ints(ports)
-	if !facts.UFWActive || facts.UFWDefaultIncoming != "deny" || facts.UFWDefaultRouted != "deny" || !facts.UFWLoggingLow || facts.UFWUnexpectedPublicAllow || !reflect.DeepEqual(ports, []int{22, 80, 443}) {
+	if !facts.UFWActive || facts.UFWDefaultIncoming != "deny" || facts.UFWDefaultOutgoing != "allow" || facts.UFWDefaultRouted != "deny" || !facts.UFWLoggingLow || facts.UFWUnexpectedPublicAllow || !reflect.DeepEqual(ports, []int{22, 80, 443}) {
 		return errors.New("effective UFW policy does not match Primary Host Hardening")
 	}
 	if !facts.Fail2banSSHActive || !facts.Fail2banRecidiveActive {
