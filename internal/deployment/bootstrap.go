@@ -16,10 +16,11 @@ import (
 const MaxCloudInitBytes = 16 * 1024
 
 var (
-	safeBootstrapToken   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	safeDefinitionToken  = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
-	safeTimezoneToken    = regexp.MustCompile(`^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$`)
-	lowercaseSHA256Token = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	safeAdministratorToken = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+	safeDefinitionToken    = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
+	safeTimezoneToken      = regexp.MustCompile(`^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$`)
+	lowercaseSHA256Token   = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	sshBase64Token         = regexp.MustCompile(`^[A-Za-z0-9+/]+={0,2}$`)
 )
 
 type BootstrapSource struct {
@@ -33,6 +34,31 @@ type BootstrapRequest struct {
 	Desired      managementstate.CloudInitDesiredState
 	SSHPublicKey string
 	Source       BootstrapSource
+}
+
+// ValidateBootstrapDesired checks target-specific values before any persistent
+// target or SSH identity is created. PrepareBootstrap repeats this validation
+// so direct compiler callers get the same contract.
+func ValidateBootstrapDesired(desired managementstate.CloudInitDesiredState) error {
+	if strings.TrimSpace(desired.Hostname) == "" {
+		return errors.New("hostname is required")
+	}
+	if !validHostname(desired.Hostname) {
+		return errors.New("hostname must be a valid lowercase DNS hostname")
+	}
+	if strings.TrimSpace(desired.Timezone) == "" {
+		return errors.New("timezone is required")
+	}
+	if !safeTimezoneToken.MatchString(desired.Timezone) || strings.Contains(desired.Timezone, "..") {
+		return errors.New("invalid timezone")
+	}
+	if strings.TrimSpace(desired.Administrator) == "" {
+		return errors.New("administrator is required")
+	}
+	if !safeAdministratorToken.MatchString(desired.Administrator) {
+		return errors.New("administrator must start with a lowercase letter and contain only lowercase letters, digits, underscore, or hyphen")
+	}
+	return nil
 }
 
 // PrepareBootstrap compiles the complete provider-facing Cloud-init document
@@ -57,23 +83,14 @@ func (c *Compiler) PrepareBootstrap(req BootstrapRequest) (BootstrapArtifact, er
 }
 
 func validateBootstrapRequest(req BootstrapRequest) error {
-	for name, value := range map[string]string{
-		"target id":      req.TargetID,
-		"hostname":       req.Desired.Hostname,
-		"timezone":       req.Desired.Timezone,
-		"administrator":  req.Desired.Administrator,
-		"source version": req.Source.Version,
-		"source sha256":  req.Source.SHA256,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s is required", name)
-		}
+	if strings.TrimSpace(req.TargetID) == "" {
+		return errors.New("target id is required")
 	}
-	if !safeBootstrapToken.MatchString(req.Desired.Hostname) || !safeBootstrapToken.MatchString(req.Desired.Administrator) {
-		return errors.New("hostname and administrator must use safe characters")
+	if err := ValidateBootstrapDesired(req.Desired); err != nil {
+		return err
 	}
-	if !safeTimezoneToken.MatchString(req.Desired.Timezone) || strings.Contains(req.Desired.Timezone, "..") {
-		return errors.New("invalid timezone")
+	if strings.TrimSpace(req.Source.Version) == "" {
+		return errors.New("source version is required")
 	}
 	if !safeDefinitionToken.MatchString(req.Source.Version) {
 		return errors.New("cloud-init source version contains unsafe characters")
@@ -88,10 +105,28 @@ func validateBootstrapRequest(req BootstrapRequest) error {
 		return errors.New("cloud-init desired version does not match frozen source version")
 	}
 	fields := strings.Fields(req.SSHPublicKey)
-	if len(fields) < 2 || fields[0] != "ssh-ed25519" || strings.ContainsAny(req.SSHPublicKey, "\r\n\x00") {
+	if len(fields) < 2 || fields[0] != "ssh-ed25519" || !sshBase64Token.MatchString(fields[1]) || strings.ContainsAny(req.SSHPublicKey, "\r\n\x00") {
 		return errors.New("complete ssh-ed25519 public key is required")
 	}
 	return nil
+}
+
+func validHostname(value string) bool {
+	if len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func renderCloudInit(req BootstrapRequest) ([]byte, error) {
@@ -99,16 +134,19 @@ func renderCloudInit(req BootstrapRequest) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse Cloud-init source template: %w", err)
 	}
+	keyFields := strings.Fields(req.SSHPublicKey)
 	data := struct {
-		Hostname          string
-		Timezone          string
-		Administrator     string
-		SSHPublicKey      string
-		DefinitionVersion string
+		Hostname             string
+		Timezone             string
+		Administrator        string
+		SSHPublicKey         string
+		SSHPublicKeyMaterial string
+		DefinitionVersion    string
 	}{
 		Hostname: req.Desired.Hostname, Timezone: req.Desired.Timezone,
 		Administrator: req.Desired.Administrator, SSHPublicKey: req.SSHPublicKey,
-		DefinitionVersion: req.Source.Version,
+		SSHPublicKeyMaterial: keyFields[0] + " " + keyFields[1],
+		DefinitionVersion:    req.Source.Version,
 	}
 	var rendered bytes.Buffer
 	if err := tmpl.Execute(&rendered, data); err != nil {
