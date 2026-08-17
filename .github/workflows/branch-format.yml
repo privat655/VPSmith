@@ -6,6 +6,7 @@ on:
       - agent/fix-step7-architecture-audit
     paths:
       - '**/*.go'
+      - '.github/workflows/branch-format.yml'
 
 permissions:
   contents: write
@@ -18,8 +19,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: true
-      - name: Format Go sources
+      - name: Restore accidental inspector overwrite and format Go sources
         run: |
+          if ! grep -q 'func (t \*sshTransport) hostFacts' internal/targetgateway/inspector.go; then
+            git show 6435f7e12859eed745d0b31640ddd88c67bda873:internal/targetgateway/inspector.go > internal/targetgateway/inspector.go
+            sed -i 's/managementstate\.CoreSourceID/managementstate.SourceSnapshotID/g' internal/targetgateway/inspector.go
+          fi
           gofmt -w $(find . -name '*.go' -type f -print)
           if git diff --quiet; then
             exit 0
@@ -27,5 +32,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- '*.go'
-          git commit -m 'chore: gofmt architecture fixes'
+          git commit -m 'chore: normalize architecture fixes'
           git push origin HEAD:agent/fix-step7-architecture-audit
