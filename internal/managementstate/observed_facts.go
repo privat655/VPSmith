@@ -6,12 +6,14 @@ import "sort"
 // Cloud-init. It is part of the canonical target observation, not a second
 // desired-state source.
 type PrimaryHardeningObservedState struct {
+	RootPasswordLocked        bool              `json:"root_password_locked"`
 	SSHConfigValid            bool              `json:"ssh_config_valid"`
 	SSHValues                 map[string]string `json:"ssh_values,omitempty"`
 	UFWActive                 bool              `json:"ufw_active"`
 	UFWDefaultIncoming        string            `json:"ufw_default_incoming,omitempty"`
 	UFWDefaultRouted          string            `json:"ufw_default_routed,omitempty"`
 	UFWLoggingLow             bool              `json:"ufw_logging_low"`
+	UFWUnexpectedPublicAllow  bool              `json:"ufw_unexpected_public_allow"`
 	UFWAllowedPublicTCPPorts  []int             `json:"ufw_allowed_public_tcp_ports,omitempty"`
 	Fail2banSSHActive         bool              `json:"fail2ban_ssh_active"`
 	Fail2banRecidiveActive    bool              `json:"fail2ban_recidive_active"`
