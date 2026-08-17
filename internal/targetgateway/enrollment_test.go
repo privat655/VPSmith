@@ -18,6 +18,17 @@ func (f *enrollmentTransport) InspectPrimaryHardening(context.Context, session) 
 	return f.hardening, nil
 }
 
+type enrollmentProcessRunner struct {
+	name string
+	args []string
+}
+
+func (r *enrollmentProcessRunner) Run(_ context.Context, name string, args ...string) ([]byte, []byte, error) {
+	r.name = name
+	r.args = append([]string(nil), args...)
+	return nil, nil, nil
+}
+
 func validPrimaryHardening() PrimaryHardeningFacts {
 	return PrimaryHardeningFacts{SSHConfigValid: true, SSHValues: map[string]string{
 		"permitrootlogin": "no", "passwordauthentication": "no", "kbdinteractiveauthentication": "no", "pubkeyauthentication": "yes", "permitemptypasswords": "no", "x11forwarding": "no", "allowagentforwarding": "no", "allowtcpforwarding": "no", "allowstreamlocalforwarding": "no", "permittunnel": "no", "gatewayports": "no", "permituserenvironment": "no",
@@ -86,5 +97,28 @@ func TestEnrollRejectsCoreOrModules(t *testing.T) {
 	gateway, ctx = enrollmentGateway(t, observed, validPrimaryHardening())
 	if _, err := gateway.Enroll(ctx, "target-a"); err == nil {
 		t.Fatal("module present accepted")
+	}
+}
+
+func TestPrimaryHardeningInspectionUsesReadOnlySudo(t *testing.T) {
+	runner := &enrollmentProcessRunner{}
+	transport := newSSHTransportAt(t.TempDir(), runner)
+	_, err := transport.InspectPrimaryHardening(context.Background(), session{
+		endpoint:     endpoint{Address: "127.0.0.1:2222", SSHUser: "vpsmith"},
+		HostKey:      "ssh-ed25519 AAAA",
+		IdentitySeed: make([]byte, 32),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.name != "ssh" || len(runner.args) == 0 {
+		t.Fatalf("runner call = %s %#v", runner.name, runner.args)
+	}
+	remoteCommand := runner.args[len(runner.args)-1]
+	if !strings.Contains(remoteCommand, "sudo -n sh -eu -c") {
+		t.Fatalf("primary hardening probe is not privileged read-only inspection: %q", remoteCommand)
+	}
+	if !strings.Contains(remoteCommand, "user='") || !strings.Contains(remoteCommand, "!seen[p]++") {
+		t.Fatalf("primary hardening probe lost target-user or UFW de-duplication: %q", remoteCommand)
 	}
 }
