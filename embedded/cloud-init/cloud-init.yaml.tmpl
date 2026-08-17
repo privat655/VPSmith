@@ -15,7 +15,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: true
     ssh_authorized_keys:
-      - {{.SSHPublicKey}}
+      - {{.SSHPublicKeyMaterial}}
 write_files:
   - path: /etc/ssh/sshd_config.d/60-vpsmith-primary.conf
     owner: root:root
@@ -80,7 +80,7 @@ runcmd:
       set -eu
       export LC_ALL=C
       rm -f /var/lib/vpsmith/cloud-init/status
-      passwd -l root >/dev/null 2>&1 || true
+      passwd -l root >/dev/null
       sshd -t
       systemctl reload ssh.service 2>/dev/null || systemctl reload sshd.service
       ufw --force reset >/dev/null
@@ -94,6 +94,8 @@ runcmd:
       ufw --force enable >/dev/null
       systemctl enable --now fail2ban.service >/dev/null
       systemctl enable --now unattended-upgrades.service >/dev/null 2>&1 || true
+      root_hash=$(getent shadow root | cut -d: -f2)
+      case "$root_hash" in !*|'*'*) ;; *) exit 1 ;; esac
       sshd -t
       ssh_effective=$(sshd -T -C user={{.Administrator}},host=$(hostname),addr=127.0.0.1)
       require_sshd() { printf '%s\n' "$ssh_effective" | grep -Fxiq "$1 $2"; }
@@ -121,8 +123,8 @@ runcmd:
       printf '%s\n' "$ufw_status" | grep -Fxq 'Status: active'
       printf '%s\n' "$ufw_status" | grep -Fq 'Default: deny (incoming), allow (outgoing), deny (routed)'
       printf '%s\n' "$ufw_status" | grep -Eq '^Logging: on \(low\)$'
-      rules=$(ufw status | awk '$2=="ALLOW" && $1 ~ /^[0-9]+\/tcp$/ {print $1}' | sort -u | paste -sd, -)
-      [ "$rules" = '22/tcp,443/tcp,80/tcp' ] || [ "$rules" = '22/tcp,80/tcp,443/tcp' ]
+      ufw_rules=$(ufw status | awk '$2=="ALLOW" {print $1}' | sort -u | paste -sd, -)
+      [ "$ufw_rules" = '22/tcp,443/tcp,80/tcp' ] || [ "$ufw_rules" = '22/tcp,80/tcp,443/tcp' ]
       systemctl is-active --quiet fail2ban.service
       fail2ban-client status sshd >/dev/null
       fail2ban-client status recidive >/dev/null
