@@ -32,21 +32,22 @@ jobs:
 
       - name: Build live verification driver
         run: |
-          mkdir -p live/out live/state live/ssh-runtime
-          chmod 0700 live/state live/ssh-runtime
+          mkdir -p live/out live/state live/sources live/ssh-runtime
+          chmod 0700 live/state live/sources live/ssh-runtime
           go build -o live/vpsmith-step7-live ./cmd/vpsmith-step7-live
 
       - name: Generate real VPSmith Cloud-init and target identity
         run: |
           live/vpsmith-step7-live prepare \
             --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
             --runtime-dir "$PWD/live/ssh-runtime" \
             --output "$PWD/live/out/user-data" \
             --target-id-output "$PWD/live/target-id" \
             --hostname vpsmith-step7 \
             --timezone Etc/UTC \
             --administrator vpsmith \
-            --version step7-live-v1 \
             | tee live/out/prepare.json
           test "$(wc -c < live/out/user-data)" -lt 16384
           cloud-init schema --config-file live/out/user-data
@@ -125,7 +126,8 @@ jobs:
             echo '## VPSmith Step 7 live verification'
             echo
             echo '- Fresh Ubuntu 24.04 VM booted from pinned cloud image.'
-            echo '- VPSmith generated the per-target SSH identity and Cloud-init.'
+            echo '- VPSmith rendered the released embedded Cloud-init snapshot.'
+            echo '- VPSmith generated the per-target SSH identity and inserted only its public key.'
             echo '- TOFU host-key observation and explicit confirmation succeeded.'
             echo '- Strict-key SSH enrollment succeeded.'
             echo '- Cloud-init status and effective Primary Host Hardening succeeded.'

@@ -74,11 +74,18 @@ func (t *sshTransport) Inspect(ctx context.Context, sess session) (managementsta
 	if err != nil {
 		return result, err
 	}
-	result.Host = host
 	cloudInit, err := t.cloudInitFacts(ctx, sess)
 	if err != nil {
 		return result, err
 	}
+	if cloudInit.Present && cloudInit.Status == "ok" {
+		hardening, err := t.InspectPrimaryHardening(ctx, sess)
+		if err != nil {
+			return result, fmt.Errorf("inspect primary hardening: %w", err)
+		}
+		host.PrimaryHardening = hardening
+	}
+	result.Host = host
 	result.CloudInit = cloudInit
 	core, err := t.coreFacts(ctx, sess)
 	if err != nil {

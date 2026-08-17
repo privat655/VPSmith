@@ -1,7 +1,7 @@
-# Cloud-init basis snapshot
+# Cloud-init released basis
 
-Version: `0.1.0-scaffold.1`
+Version: `0.1.0`
 
-This directory is an identified build input for VPSmith Platform step 1. It is intentionally not deployable yet. The canonical Cloud-init implementation belongs to a later implementation step and must follow the finished VPSmith specs rather than the historical scripts.
+This directory is the canonical released Cloud-init source snapshot for VPSmith Primary Host Hardening. `cloud-init.yaml.tmpl` is a trusted build input. VPSmith Studio renders target-specific values into this template through the Deployment Compiler.
 
-No credentials, SSH private keys, password hashes, or VPSmith Github access configuration belong here.
+The source must not contain credentials, SSH private keys, password hashes, provider API integration, or runtime downloaders. Target-specific public SSH keys are inserted only into generated provider-facing Cloud-init output.

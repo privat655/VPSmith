@@ -2,20 +2,38 @@ package managementstate
 
 import "sort"
 
+// PrimaryHardeningObservedState contains effective read-only facts owned by
+// Cloud-init. It is part of the canonical target observation, not a second
+// desired-state source.
+type PrimaryHardeningObservedState struct {
+	SSHConfigValid            bool              `json:"ssh_config_valid"`
+	SSHValues                 map[string]string `json:"ssh_values,omitempty"`
+	UFWActive                 bool              `json:"ufw_active"`
+	UFWDefaultIncoming        string            `json:"ufw_default_incoming,omitempty"`
+	UFWDefaultRouted          string            `json:"ufw_default_routed,omitempty"`
+	UFWLoggingLow             bool              `json:"ufw_logging_low"`
+	UFWAllowedPublicTCPPorts  []int             `json:"ufw_allowed_public_tcp_ports,omitempty"`
+	Fail2banSSHActive         bool              `json:"fail2ban_ssh_active"`
+	Fail2banRecidiveActive    bool              `json:"fail2ban_recidive_active"`
+	UnattendedUpgradesEnabled bool              `json:"unattended_upgrades_enabled"`
+	AutomaticRebootDisabled   bool              `json:"automatic_reboot_disabled"`
+}
+
 // HostObservedState contains direct host facts collected read-only over SSH.
 type HostObservedState struct {
-	Reachable      bool                    `json:"reachable"`
-	SSH            bool                    `json:"ssh"`
-	Hostname       string                  `json:"hostname,omitempty"`
-	OSID           string                  `json:"os_id,omitempty"`
-	OSVersion      string                  `json:"os_version,omitempty"`
-	Kernel         string                  `json:"kernel,omitempty"`
-	RootFilesystem FilesystemObservedState `json:"root_filesystem"`
-	Memory         MemoryObservedState     `json:"memory"`
-	Swap           MemoryObservedState     `json:"swap"`
-	RebootRequired bool                    `json:"reboot_required"`
-	UFWActive      bool                    `json:"ufw_active"`
-	Fail2banActive bool                    `json:"fail2ban_active"`
+	Reachable        bool                          `json:"reachable"`
+	SSH              bool                          `json:"ssh"`
+	Hostname         string                        `json:"hostname,omitempty"`
+	OSID             string                        `json:"os_id,omitempty"`
+	OSVersion        string                        `json:"os_version,omitempty"`
+	Kernel           string                        `json:"kernel,omitempty"`
+	RootFilesystem   FilesystemObservedState       `json:"root_filesystem"`
+	Memory           MemoryObservedState           `json:"memory"`
+	Swap             MemoryObservedState           `json:"swap"`
+	RebootRequired   bool                          `json:"reboot_required"`
+	UFWActive        bool                          `json:"ufw_active"`
+	Fail2banActive   bool                          `json:"fail2ban_active"`
+	PrimaryHardening PrimaryHardeningObservedState `json:"primary_hardening"`
 }
 
 type FilesystemObservedState struct {
@@ -96,6 +114,7 @@ func NormalizeObservedState(value *ObservedState) {
 	if value == nil {
 		return
 	}
+	sort.Ints(value.Host.PrimaryHardening.UFWAllowedPublicTCPPorts)
 	sort.Slice(value.Modules, func(i, j int) bool { return value.Modules[i].InstanceID < value.Modules[j].InstanceID })
 	sort.Slice(value.Core.Units, func(i, j int) bool { return value.Core.Units[i].Name < value.Core.Units[j].Name })
 	sort.Slice(value.Core.Containers, func(i, j int) bool { return value.Core.Containers[i].Name < value.Core.Containers[j].Name })

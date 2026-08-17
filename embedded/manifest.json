@@ -5,9 +5,9 @@
   },
   "embedded": {
     "cloud_init": {
-      "version": "0.1.0-scaffold.1",
+      "version": "0.1.0",
       "path": "cloud-init",
-      "sha256": "5861bcae8e74cefc2840e3cc25f2f2fed99cabc4da695386edcfccae780938ba"
+      "sha256": "e90e07919e6214c4f403fa593b6dd3e23708483f1cfeec1bcfbf82bad482f76b"
     },
     "core": {
       "version": "0.1.0-scaffold.1",

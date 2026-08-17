@@ -9,15 +9,6 @@ import (
 	"github.com/privat655/VPSmith/internal/managementstate"
 )
 
-type enrollmentTransport struct {
-	*fakeTransport
-	hardening PrimaryHardeningFacts
-}
-
-func (f *enrollmentTransport) InspectPrimaryHardening(context.Context, session) (PrimaryHardeningFacts, error) {
-	return f.hardening, nil
-}
-
 type enrollmentProcessRunner struct {
 	name string
 	args []string
@@ -31,20 +22,37 @@ func (r *enrollmentProcessRunner) Run(_ context.Context, name string, args ...st
 
 func validPrimaryHardening() PrimaryHardeningFacts {
 	return PrimaryHardeningFacts{SSHConfigValid: true, SSHValues: map[string]string{
-		"permitrootlogin": "no", "passwordauthentication": "no", "kbdinteractiveauthentication": "no", "pubkeyauthentication": "yes", "permitemptypasswords": "no", "x11forwarding": "no", "allowagentforwarding": "no", "allowtcpforwarding": "no", "allowstreamlocalforwarding": "no", "permittunnel": "no", "gatewayports": "no", "permituserenvironment": "no",
-	}, UFWActive: true, UFWDefaultIncoming: "deny", UFWDefaultRouted: "deny", UFWAllowedPublicTCPPorts: []int{443, 22, 80}, Fail2banSSHActive: true, UnattendedUpgradesEnabled: true, AutomaticRebootDisabled: true}
+		"permitrootlogin": "no", "passwordauthentication": "no", "kbdinteractiveauthentication": "no",
+		"pubkeyauthentication": "yes", "authenticationmethods": "publickey", "permitemptypasswords": "no",
+		"logingracetime": "20", "maxauthtries": "3", "maxsessions": "3", "maxstartups": "10:30:60",
+		"x11forwarding": "no", "allowagentforwarding": "no", "allowtcpforwarding": "no",
+		"allowstreamlocalforwarding": "no", "permittunnel": "no", "gatewayports": "no",
+		"permituserenvironment": "no", "compression": "no", "loglevel": "verbose",
+	}, UFWActive: true, UFWDefaultIncoming: "deny", UFWDefaultRouted: "deny", UFWLoggingLow: true,
+		UFWAllowedPublicTCPPorts: []int{443, 22, 80}, Fail2banSSHActive: true, Fail2banRecidiveActive: true,
+		UnattendedUpgradesEnabled: true, AutomaticRebootDisabled: true}
 }
 
 func enrolledObserved() managementstate.ObservedState {
-	return managementstate.ObservedState{CloudInit: managementstate.CloudInitObservedState{Present: true, Status: "ok", Version: "cloud-init-v1", FinishedAt: "2026-08-17T00:00:00Z"}, Modules: []managementstate.ModuleObservedState{}}
+	return managementstate.ObservedState{
+		Host:      managementstate.HostObservedState{PrimaryHardening: validPrimaryHardening()},
+		CloudInit: managementstate.CloudInitObservedState{Present: true, Status: "ok", Version: "cloud-init-v1", FinishedAt: "2026-08-17T00:00:00Z"},
+		Modules:   []managementstate.ModuleObservedState{},
+	}
 }
 
 func enrollmentGateway(t *testing.T, observed managementstate.ObservedState, facts PrimaryHardeningFacts) (*Gateway, context.Context) {
 	t.Helper()
 	ctx := context.Background()
 	store := newTargetStore(t, "target-a")
+	if err := store.Change(ctx, func(change *managementstate.Change) error {
+		return change.SetDesiredState("target-a", managementstate.DesiredState{CloudInit: managementstate.CloudInitDesiredState{DefinitionVersion: "cloud-init-v1"}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observed.Host.PrimaryHardening = facts
 	key := testHostObservation(1)
-	remote := &enrollmentTransport{fakeTransport: &fakeTransport{offered: key, facts: observed}, hardening: facts}
+	remote := &fakeTransport{offered: key, facts: observed}
 	gateway := newGateway(store, remote, time.Now)
 	if _, err := gateway.EnsureIdentity(ctx, "target-a"); err != nil {
 		t.Fatal(err)
@@ -55,7 +63,7 @@ func enrollmentGateway(t *testing.T, observed managementstate.ObservedState, fac
 	return gateway, ctx
 }
 
-func TestEnrollRequiresStatusAndEffectiveHardeningAndLeavesCoreAbsent(t *testing.T) {
+func TestEnrollRequiresStatusDesiredVersionAndEffectiveHardeningAndLeavesCoreAbsent(t *testing.T) {
 	gateway, ctx := enrollmentGateway(t, enrolledObserved(), validPrimaryHardening())
 	result, err := gateway.Enroll(ctx, "target-a")
 	if err != nil {
@@ -63,6 +71,19 @@ func TestEnrollRequiresStatusAndEffectiveHardeningAndLeavesCoreAbsent(t *testing
 	}
 	if !result.Observed.CloudInit.Present || result.Observed.Core.Present || len(result.Observed.Modules) != 0 {
 		t.Fatalf("unexpected enrolled state: %#v", result.Observed)
+	}
+	if !result.Observed.Host.PrimaryHardening.SSHConfigValid || !result.PrimaryHardening.Fail2banRecidiveActive {
+		t.Fatalf("canonical Primary Host Hardening facts missing: %#v", result)
+	}
+}
+
+func TestEnrollRejectsSuccessfulStatusWithWrongVersion(t *testing.T) {
+	observed := enrolledObserved()
+	observed.CloudInit.Version = "other"
+	gateway, ctx := enrollmentGateway(t, observed, validPrimaryHardening())
+	_, err := gateway.Enroll(ctx, "target-a")
+	if err == nil || !strings.Contains(err.Error(), "does not match desired version") {
+		t.Fatalf("error=%v", err)
 	}
 }
 
@@ -73,6 +94,21 @@ func TestEnrollRejectsSuccessfulStatusWhenHardeningIsWrong(t *testing.T) {
 	_, err := gateway.Enroll(ctx, "target-a")
 	if err == nil || !strings.Contains(err.Error(), "passwordauthentication") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestEnrollRejectsMissingUFWLoggingOrRecidive(t *testing.T) {
+	facts := validPrimaryHardening()
+	facts.UFWLoggingLow = false
+	gateway, ctx := enrollmentGateway(t, enrolledObserved(), facts)
+	if _, err := gateway.Enroll(ctx, "target-a"); err == nil {
+		t.Fatal("missing UFW logging accepted")
+	}
+	facts = validPrimaryHardening()
+	facts.Fail2banRecidiveActive = false
+	gateway, ctx = enrollmentGateway(t, enrolledObserved(), facts)
+	if _, err := gateway.Enroll(ctx, "target-a"); err == nil {
+		t.Fatal("missing fail2ban recidive accepted")
 	}
 }
 
@@ -100,7 +136,7 @@ func TestEnrollRejectsCoreOrModules(t *testing.T) {
 	}
 }
 
-func TestPrimaryHardeningInspectionUsesReadOnlySudo(t *testing.T) {
+func TestPrimaryHardeningInspectionUsesReadOnlySudoAndCompleteEffectiveProbe(t *testing.T) {
 	runner := &enrollmentProcessRunner{}
 	transport := newSSHTransportAt(t.TempDir(), runner)
 	_, err := transport.InspectPrimaryHardening(context.Background(), session{
@@ -115,10 +151,9 @@ func TestPrimaryHardeningInspectionUsesReadOnlySudo(t *testing.T) {
 		t.Fatalf("runner call = %s %#v", runner.name, runner.args)
 	}
 	remoteCommand := runner.args[len(runner.args)-1]
-	if !strings.Contains(remoteCommand, "sudo -n sh -eu -c") {
-		t.Fatalf("primary hardening probe is not privileged read-only inspection: %q", remoteCommand)
-	}
-	if !strings.Contains(remoteCommand, "user='") || !strings.Contains(remoteCommand, "!seen[p]++") {
-		t.Fatalf("primary hardening probe lost target-user or UFW de-duplication: %q", remoteCommand)
+	for _, want := range []string{"sudo -n sh -eu -c", "user='", "authenticationmethods", "logingracetime", "maxauthtries", "maxsessions", "maxstartups", "compression", "loglevel", "ufw_logging_low", "fail2ban-client status recidive", "!seen[p]++"} {
+		if !strings.Contains(remoteCommand, want) {
+			t.Fatalf("primary hardening probe missing %q: %q", want, remoteCommand)
+		}
 	}
 }
