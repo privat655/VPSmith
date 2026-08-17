@@ -12,10 +12,12 @@ import (
 func (t *sshTransport) InspectPrimaryHardening(ctx context.Context, sess session) (PrimaryHardeningFacts, error) {
 	probe := `set -eu
 export LC_ALL=C
+root_hash=$(getent shadow root | cut -d: -f2)
+case "$root_hash" in !*|'*'*) printf 'root_locked\t1\n' ;; *) printf 'root_locked\t0\n' ;; esac
 if sshd -t; then printf 'ssh_config_valid\t1\n'; else printf 'ssh_config_valid\t0\n'; exit 0; fi
 sshd -T -C user=` + shellQuote(sess.SSHUser) + `,host="$(hostname)",addr=127.0.0.1 | awk '$1 ~ /^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication|authenticationmethods|permitemptypasswords|logingracetime|maxauthtries|maxsessions|maxstartups|x11forwarding|allowagentforwarding|allowtcpforwarding|allowstreamlocalforwarding|permittunnel|gatewayports|permituserenvironment|compression|loglevel)$/ {print "ssh_" $1 "\t" $2}'
 ufw status verbose | awk '/^Status:/ {print "ufw_active\t" ($2=="active"?1:0)} /^Logging:/ {print "ufw_logging_low\t" ($2=="on" && $3=="(low)"?1:0)} /^Default:/ {gsub(/[(),]/,""); print "ufw_incoming\t" $2; print "ufw_routed\t" $6}'
-ufw status | awk '$2=="ALLOW" {p=$1; sub(/\/tcp$/, "", p); if (p ~ /^[0-9]+$/ && !seen[p]++) print "ufw_port\t" p}'
+ufw status | awk '$2=="ALLOW" {rule=$1; if (rule ~ /^[0-9]+\/tcp$/) {p=rule; sub(/\/tcp$/, "", p); if (!seen[p]++) print "ufw_port\t" p} else {print "ufw_unexpected_allow\t1"}}'
 if systemctl is-active --quiet fail2ban.service && fail2ban-client status sshd >/dev/null 2>&1; then printf 'fail2ban_sshd\t1\n'; else printf 'fail2ban_sshd\t0\n'; fi
 if systemctl is-active --quiet fail2ban.service && fail2ban-client status recidive >/dev/null 2>&1; then printf 'fail2ban_recidive\t1\n'; else printf 'fail2ban_recidive\t0\n'; fi
 u=$(apt-config shell x APT::Periodic::Unattended-Upgrade | sed -n "s/^x='\(.*\)'$/\1/p")
@@ -34,6 +36,8 @@ printf 'automatic_reboot\t%s\n' "$r"`
 			continue
 		}
 		switch {
+		case key == "root_locked":
+			facts.RootPasswordLocked = value == "1"
 		case key == "ssh_config_valid":
 			facts.SSHConfigValid = value == "1"
 		case strings.HasPrefix(key, "ssh_"):
@@ -46,6 +50,8 @@ printf 'automatic_reboot\t%s\n' "$r"`
 			facts.UFWDefaultRouted = value
 		case key == "ufw_logging_low":
 			facts.UFWLoggingLow = value == "1"
+		case key == "ufw_unexpected_allow":
+			facts.UFWUnexpectedPublicAllow = value == "1"
 		case key == "ufw_port":
 			port, err := strconv.Atoi(value)
 			if err != nil {
