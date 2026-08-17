@@ -1,29 +1,69 @@
 package deployment
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"text/template"
 
 	"github.com/privat655/VPSmith/internal/managementstate"
 )
 
 const MaxCloudInitBytes = 16 * 1024
 
-var safeBootstrapToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var (
+	safeAdministratorToken = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+	safeDefinitionToken    = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
+	safeTimezoneToken      = regexp.MustCompile(`^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$`)
+	lowercaseSHA256Token   = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	sshBase64Token         = regexp.MustCompile(`^[A-Za-z0-9+/]+={0,2}$`)
+)
+
+type BootstrapSource struct {
+	Version  string
+	SHA256   string
+	Template []byte
+}
 
 type BootstrapRequest struct {
 	TargetID     string
 	Desired      managementstate.CloudInitDesiredState
 	SSHPublicKey string
+	Source       BootstrapSource
 }
 
-// PrepareBootstrap compiles the complete provider-facing Cloud-init document.
-// Cloud-init is deliberately not an execution bundle: it runs before SSH trust
-// exists and contains only Part 1 (Primary Host Hardening).
+// ValidateBootstrapDesired checks target-specific values before any persistent
+// target or SSH identity is created. PrepareBootstrap repeats this validation
+// so direct compiler callers get the same contract.
+func ValidateBootstrapDesired(desired managementstate.CloudInitDesiredState) error {
+	if strings.TrimSpace(desired.Hostname) == "" {
+		return errors.New("hostname is required")
+	}
+	if !validHostname(desired.Hostname) {
+		return errors.New("hostname must be a valid lowercase DNS hostname")
+	}
+	if strings.TrimSpace(desired.Timezone) == "" {
+		return errors.New("timezone is required")
+	}
+	if !safeTimezoneToken.MatchString(desired.Timezone) || strings.Contains(desired.Timezone, "..") {
+		return errors.New("invalid timezone")
+	}
+	if strings.TrimSpace(desired.Administrator) == "" {
+		return errors.New("administrator is required")
+	}
+	if desired.Administrator == "root" || !safeAdministratorToken.MatchString(desired.Administrator) {
+		return errors.New("administrator must be a non-root lowercase account name using only letters, digits, underscore, or hyphen")
+	}
+	return nil
+}
+
+// PrepareBootstrap compiles the complete provider-facing Cloud-init document
+// from one frozen source snapshot. Cloud-init is deliberately not an execution
+// bundle: it runs before SSH trust exists and contains only Part 1.
 func (c *Compiler) PrepareBootstrap(req BootstrapRequest) (BootstrapArtifact, error) {
 	if c == nil {
 		return BootstrapArtifact{}, errors.New("deployment compiler is required")
@@ -31,140 +71,89 @@ func (c *Compiler) PrepareBootstrap(req BootstrapRequest) (BootstrapArtifact, er
 	if err := validateBootstrapRequest(req); err != nil {
 		return BootstrapArtifact{}, err
 	}
-	data := []byte(renderCloudInit(req))
+	data, err := renderCloudInit(req)
+	if err != nil {
+		return BootstrapArtifact{}, err
+	}
 	if len(data) >= MaxCloudInitBytes {
 		return BootstrapArtifact{}, fmt.Errorf("cloud-init is %d bytes; must be smaller than %d", len(data), MaxCloudInitBytes)
 	}
 	sum := sha256.Sum256(data)
-	return BootstrapArtifact{Identity: req.Desired.DefinitionVersion, SHA256: hex.EncodeToString(sum[:]), Bytes: data}, nil
+	return BootstrapArtifact{Identity: req.Source.Version, SHA256: hex.EncodeToString(sum[:]), Bytes: data}, nil
 }
 
 func validateBootstrapRequest(req BootstrapRequest) error {
-	for name, value := range map[string]string{
-		"target id": req.TargetID, "definition version": req.Desired.DefinitionVersion,
-		"hostname": req.Desired.Hostname, "timezone": req.Desired.Timezone, "administrator": req.Desired.Administrator,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s is required", name)
-		}
+	if strings.TrimSpace(req.TargetID) == "" {
+		return errors.New("target id is required")
 	}
-	if !safeBootstrapToken.MatchString(req.Desired.Hostname) || !safeBootstrapToken.MatchString(req.Desired.Administrator) {
-		return errors.New("hostname and administrator must use safe characters")
+	if err := ValidateBootstrapDesired(req.Desired); err != nil {
+		return err
 	}
-	if strings.ContainsAny(req.Desired.Timezone, "\r\n\x00") || strings.Contains(req.Desired.Timezone, "..") || strings.HasPrefix(req.Desired.Timezone, "/") {
-		return errors.New("invalid timezone")
+	if strings.TrimSpace(req.Source.Version) == "" {
+		return errors.New("source version is required")
+	}
+	if !safeDefinitionToken.MatchString(req.Source.Version) {
+		return errors.New("cloud-init source version contains unsafe characters")
+	}
+	if !lowercaseSHA256Token.MatchString(req.Source.SHA256) {
+		return errors.New("cloud-init source sha256 must be lowercase hexadecimal")
+	}
+	if len(req.Source.Template) == 0 {
+		return errors.New("cloud-init source template is required")
+	}
+	if req.Desired.DefinitionVersion != "" && req.Desired.DefinitionVersion != req.Source.Version {
+		return errors.New("cloud-init desired version does not match frozen source version")
 	}
 	fields := strings.Fields(req.SSHPublicKey)
-	if len(fields) < 2 || fields[0] != "ssh-ed25519" || strings.ContainsAny(req.SSHPublicKey, "\r\n\x00") {
+	if len(fields) < 2 || fields[0] != "ssh-ed25519" || !sshBase64Token.MatchString(fields[1]) || strings.ContainsAny(req.SSHPublicKey, "\r\n\x00") {
 		return errors.New("complete ssh-ed25519 public key is required")
 	}
 	return nil
 }
 
-func renderCloudInit(req BootstrapRequest) string {
-	return fmt.Sprintf(`#cloud-config
-hostname: %s
-timezone: %s
-package_update: true
-package_upgrade: true
-packages: [openssh-server, sudo, ufw, fail2ban, unattended-upgrades]
-ssh_pwauth: false
-disable_root: true
-users:
-  - name: %s
-    shell: /bin/bash
-    groups: [adm, sudo]
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: true
-    ssh_authorized_keys:
-      - %s
-write_files:
-  - path: /etc/ssh/sshd_config.d/60-vpsmith-primary.conf
-    owner: root:root
-    permissions: '0644'
-    content: |
-      PermitRootLogin no
-      PasswordAuthentication no
-      KbdInteractiveAuthentication no
-      PubkeyAuthentication yes
-      PermitEmptyPasswords no
-      AllowUsers %s
-      X11Forwarding no
-      AllowAgentForwarding no
-      AllowTcpForwarding no
-      AllowStreamLocalForwarding no
-      PermitTunnel no
-      GatewayPorts no
-      PermitUserEnvironment no
-      DisableForwarding yes
-  - path: /etc/fail2ban/jail.d/vpsmith-sshd.local
-    owner: root:root
-    permissions: '0644'
-    content: |
-      [DEFAULT]
-      backend = systemd
-      banaction = ufw
-      bantime = 1h
-      findtime = 10m
-      maxretry = 4
-      [sshd]
-      enabled = true
-      port = ssh
-  - path: /etc/apt/apt.conf.d/52-vpsmith-auto-upgrades
-    owner: root:root
-    permissions: '0644'
-    content: |
-      APT::Periodic::Update-Package-Lists "1";
-      APT::Periodic::Unattended-Upgrade "1";
-      Unattended-Upgrade::Automatic-Reboot "false";
-runcmd:
-  - |
-      set -eu
-      rm -f /var/lib/vpsmith/cloud-init/status
-      passwd -l root >/dev/null 2>&1 || true
-      sshd -t
-      systemctl reload ssh.service 2>/dev/null || systemctl reload sshd.service
-      ufw --force reset >/dev/null
-      ufw default deny incoming >/dev/null
-      ufw default allow outgoing >/dev/null
-      ufw default deny routed >/dev/null
-      ufw allow 22/tcp >/dev/null
-      ufw allow 80/tcp >/dev/null
-      ufw allow 443/tcp >/dev/null
-      ufw --force enable >/dev/null
-      systemctl enable --now fail2ban.service >/dev/null
-      systemctl enable --now unattended-upgrades.service >/dev/null 2>&1 || true
-      sshd -t
-      ssh_effective=$(sshd -T -C user=%s,host=$(hostname),addr=127.0.0.1)
-      require_sshd() { printf '%%s\n' "$ssh_effective" | grep -Fxq "$1 $2"; }
-      require_sshd permitrootlogin no
-      require_sshd passwordauthentication no
-      require_sshd kbdinteractiveauthentication no
-      require_sshd pubkeyauthentication yes
-      require_sshd permitemptypasswords no
-      require_sshd x11forwarding no
-      require_sshd allowagentforwarding no
-      require_sshd allowtcpforwarding no
-      require_sshd allowstreamlocalforwarding no
-      require_sshd permittunnel no
-      require_sshd gatewayports no
-      require_sshd permituserenvironment no
-      printf '%%s\n' "$ssh_effective" | grep -Eq '^allowusers([[:space:]]+)%s$'
-      ufw status verbose | grep -Fxq 'Status: active'
-      ufw status verbose | grep -Fq 'Default: deny (incoming), allow (outgoing), deny (routed)'
-      rules=$(ufw status | awk '$2=="ALLOW" {print $1}' | sort -u | paste -sd, -)
-      [ "$rules" = '22/tcp,443/tcp,80/tcp' ] || [ "$rules" = '22/tcp,80/tcp,443/tcp' ]
-      systemctl is-active --quiet fail2ban.service
-      fail2ban-client status sshd >/dev/null
-      [ "$(apt-config shell x APT::Periodic::Unattended-Upgrade | sed -n "s/^x='\(.*\)'$/\1/p")" = 1 ]
-      [ "$(apt-config shell x Unattended-Upgrade::Automatic-Reboot | sed -n "s/^x='\(.*\)'$/\1/p")" = false ]
-      install -d -m 0755 /var/lib/vpsmith/cloud-init
-      tmp=$(mktemp /var/lib/vpsmith/cloud-init/.status.XXXXXX)
-      trap 'rm -f "$tmp"' EXIT
-      { printf 'status=ok\n'; printf 'version=%s\n'; printf 'finished_at=%%s\n' "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"; } >"$tmp"
-      chmod 0644 "$tmp"
-      mv -f "$tmp" /var/lib/vpsmith/cloud-init/status
-      trap - EXIT
-`, req.Desired.Hostname, req.Desired.Timezone, req.Desired.Administrator, req.SSHPublicKey, req.Desired.Administrator,
-		req.Desired.Administrator, req.Desired.Administrator, req.Desired.DefinitionVersion)
+func validHostname(value string) bool {
+	if len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func renderCloudInit(req BootstrapRequest) ([]byte, error) {
+	tmpl, err := template.New("cloud-init").Option("missingkey=error").Parse(string(req.Source.Template))
+	if err != nil {
+		return nil, fmt.Errorf("parse Cloud-init source template: %w", err)
+	}
+	keyFields := strings.Fields(req.SSHPublicKey)
+	data := struct {
+		Hostname             string
+		Timezone             string
+		Administrator        string
+		SSHPublicKey         string
+		SSHPublicKeyMaterial string
+		DefinitionVersion    string
+	}{
+		Hostname: req.Desired.Hostname, Timezone: req.Desired.Timezone,
+		Administrator: req.Desired.Administrator, SSHPublicKey: req.SSHPublicKey,
+		SSHPublicKeyMaterial: keyFields[0] + " " + keyFields[1],
+		DefinitionVersion:    req.Source.Version,
+	}
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		return nil, fmt.Errorf("render Cloud-init source template: %w", err)
+	}
+	if !bytes.HasPrefix(rendered.Bytes(), []byte("#cloud-config\n")) {
+		return nil, errors.New("Cloud-init source must render a #cloud-config document")
+	}
+	return rendered.Bytes(), nil
 }

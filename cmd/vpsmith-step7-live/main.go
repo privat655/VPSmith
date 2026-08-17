@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,12 +9,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/privat655/VPSmith/internal/bootstrap"
 	"github.com/privat655/VPSmith/internal/deployment"
 	"github.com/privat655/VPSmith/internal/executionbundle"
 	"github.com/privat655/VPSmith/internal/managementstate"
+	"github.com/privat655/VPSmith/internal/sourcelibrary"
 	"github.com/privat655/VPSmith/internal/targetgateway"
 )
 
@@ -25,7 +28,7 @@ func (rejectingRegistry) Resolve(context.Context, string) (string, error) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal(errors.New("usage: vpsmith-step7-live prepare|enroll"))
+		fatal(errors.New("usage: vpsmith-step7-live prepare|enroll|diagnose"))
 	}
 	var err error
 	switch os.Args[1] {
@@ -33,6 +36,8 @@ func main() {
 		err = prepare(os.Args[2:])
 	case "enroll":
 		err = enroll(os.Args[2:])
+	case "diagnose":
+		err = diagnose(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -42,34 +47,50 @@ func main() {
 }
 
 func prepare(args []string) error {
-	fs := flag.NewFlagSet("prepare", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "", "management-state directory")
-	runtimeDir := fs.String("runtime-dir", "", "SSH runtime directory")
-	output := fs.String("output", "", "Cloud-init output path")
-	targetIDOutput := fs.String("target-id-output", "", "target id output path")
-	hostname := fs.String("hostname", "vpsmith-step7", "target hostname")
-	timezone := fs.String("timezone", "Etc/UTC", "target timezone")
-	administrator := fs.String("administrator", "vpsmith", "administrator user")
-	version := fs.String("version", "step7-live-v1", "Cloud-init definition version")
-	if err := fs.Parse(args); err != nil {
+	flags := flag.NewFlagSet("prepare", flag.ContinueOnError)
+	stateDir := flags.String("state-dir", "", "management-state directory")
+	sourcesDir := flags.String("sources-dir", "", "source-library directory")
+	embeddedRoot := flags.String("embedded-root", "embedded", "embedded release source root")
+	runtimeDir := flags.String("runtime-dir", "", "SSH runtime directory")
+	output := flags.String("output", "", "Cloud-init output path")
+	targetIDOutput := flags.String("target-id-output", "", "target id output path")
+	hostname := flags.String("hostname", "vpsmith-step7", "target hostname")
+	timezone := flags.String("timezone", "Etc/UTC", "target timezone")
+	administrator := flags.String("administrator", "vpsmith", "administrator user")
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *stateDir == "" || *runtimeDir == "" || *output == "" || *targetIDOutput == "" {
-		return errors.New("state-dir, runtime-dir, output, and target-id-output are required")
+	if *stateDir == "" || *sourcesDir == "" || *runtimeDir == "" || *output == "" || *targetIDOutput == "" {
+		return errors.New("state-dir, sources-dir, runtime-dir, output, and target-id-output are required")
 	}
 
 	ctx := context.Background()
-	state, gateway, compiler, closeFn, err := stack(*stateDir, *runtimeDir)
+	state, gateway, closeFn, err := targetStack(*stateDir, *runtimeDir)
 	if err != nil {
 		return err
 	}
 	defer closeFn()
-	coordinator, err := bootstrap.New(state, gateway, compiler)
+	sources, err := sourcelibrary.New(*sourcesDir, *embeddedRoot, state, sourcelibrary.NewGithubRemote())
+	if err != nil {
+		return err
+	}
+	if _, err := sources.ImportEmbedded(ctx); err != nil {
+		return fmt.Errorf("import embedded source snapshots: %w", err)
+	}
+	bundles, err := executionbundle.NewAssembler(filepath.Join(*stateDir, "live-test-bundles"))
+	if err != nil {
+		return err
+	}
+	compiler, err := deployment.New(rejectingRegistry{}, bundles)
+	if err != nil {
+		return err
+	}
+	coordinator, err := bootstrap.New(state, gateway, compiler, sources)
 	if err != nil {
 		return err
 	}
 	prepared, err := coordinator.PrepareNewTarget(ctx, bootstrap.NewTargetRequest{
-		Hostname: *hostname, Timezone: *timezone, Administrator: *administrator, DefinitionVersion: *version,
+		Hostname: *hostname, Timezone: *timezone, Administrator: *administrator,
 	})
 	if err != nil {
 		return err
@@ -81,21 +102,23 @@ func prepare(args []string) error {
 		return fmt.Errorf("write target id: %w", err)
 	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"target_id":              prepared.TargetID,
-		"cloud_init_sha256":      prepared.CloudInit.SHA256,
-		"cloud_init_bytes":       len(prepared.CloudInit.Bytes),
-		"ssh_public_fingerprint": prepared.SSHIdentity.Fingerprint,
+		"target_id":                 prepared.TargetID,
+		"cloud_init_source_version": prepared.CloudInitSource.Version,
+		"cloud_init_source_sha256":  prepared.CloudInitSource.SHA256,
+		"cloud_init_output_sha256":  prepared.CloudInit.SHA256,
+		"cloud_init_bytes":          len(prepared.CloudInit.Bytes),
+		"ssh_public_fingerprint":    prepared.SSHIdentity.Fingerprint,
 	})
 }
 
 func enroll(args []string) error {
-	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "", "management-state directory")
-	runtimeDir := fs.String("runtime-dir", "", "SSH runtime directory")
-	targetID := fs.String("target-id", "", "target id")
-	address := fs.String("address", "", "host:port address")
-	timeout := fs.Duration("timeout", 20*time.Minute, "enrollment timeout")
-	if err := fs.Parse(args); err != nil {
+	flags := flag.NewFlagSet("enroll", flag.ContinueOnError)
+	stateDir := flags.String("state-dir", "", "management-state directory")
+	runtimeDir := flags.String("runtime-dir", "", "SSH runtime directory")
+	targetID := flags.String("target-id", "", "target id")
+	address := flags.String("address", "", "host:port address")
+	timeout := flags.Duration("timeout", 20*time.Minute, "enrollment timeout")
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *stateDir == "" || *runtimeDir == "" || *targetID == "" || *address == "" {
@@ -104,7 +127,7 @@ func enroll(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	state, gateway, _, closeFn, err := stack(*stateDir, *runtimeDir)
+	state, gateway, closeFn, err := targetStack(*stateDir, *runtimeDir)
 	if err != nil {
 		return err
 	}
@@ -115,25 +138,35 @@ func enroll(args []string) error {
 	}
 
 	var observation targetgateway.HostKeyObservation
-	for {
+	for attempt := 1; ; attempt++ {
 		observation, err = gateway.ObserveHostKey(ctx, id)
 		if err == nil {
 			break
 		}
+		reportRetry("SSH host-key observation", attempt, err)
 		if err := sleepContext(ctx, 2*time.Second); err != nil {
 			return fmt.Errorf("observe fresh target host key: %w", err)
 		}
 	}
+	fmt.Fprintf(os.Stderr, "SSH host key observed: %s\n", observation.Fingerprint)
 	if err := gateway.ConfirmHostKey(ctx, id, observation); err != nil {
 		return fmt.Errorf("confirm observed host key: %w", err)
 	}
+	fmt.Fprintln(os.Stderr, "SSH host key confirmed; waiting for Cloud-init and Primary Host Hardening")
 
 	var result targetgateway.EnrollmentResult
 	var lastErr error
-	for {
+	for attempt := 1; ; attempt++ {
 		result, lastErr = gateway.Enroll(ctx, id)
 		if lastErr == nil {
 			break
+		}
+		reportRetry("enrollment", attempt, lastErr)
+		if attempt == 1 || attempt%3 == 0 {
+			marker, markerErr := cloudFinalFailure(ctx, gateway, id)
+			if markerErr == nil && marker != "" {
+				return fmt.Errorf("cloud-init Primary Host Hardening failed: %s", marker)
+			}
 		}
 		if err := sleepContext(ctx, 3*time.Second); err != nil {
 			return fmt.Errorf("enrollment did not become valid: %v: %w", lastErr, err)
@@ -148,30 +181,108 @@ func enroll(args []string) error {
 	}{HostKey: observation, Result: result})
 }
 
-func stack(stateDir, runtimeDir string) (*managementstate.Store, *targetgateway.Gateway, *deployment.Compiler, func(), error) {
+func cloudFinalFailure(ctx context.Context, gateway *targetgateway.Gateway, id managementstate.TargetID) (string, error) {
+	var buffer bytes.Buffer
+	err := gateway.Logs(ctx, id, targetgateway.LogRequest{Kind: targetgateway.LogJournalUnit, Name: "cloud-final.service", Scope: "system", Lines: 80}, func(chunk targetgateway.LogChunk) error {
+		_, writeErr := buffer.Write(chunk.Data)
+		return writeErr
+	})
+	if err != nil {
+		return "", err
+	}
+	return primaryFailureMarker(buffer.String()), nil
+}
+
+func primaryFailureMarker(logText string) string {
+	const prefix = "vpsmith-primary-failed stage="
+	for _, line := range strings.Split(logText, "\n") {
+		if index := strings.Index(line, prefix); index >= 0 {
+			return strings.TrimSpace(line[index:])
+		}
+	}
+	return ""
+}
+
+type liveDiagnostics struct {
+	Observed     *managementstate.ObservedState `json:"observed,omitempty"`
+	InspectError string                         `json:"inspect_error,omitempty"`
+	Logs         map[string]string              `json:"logs,omitempty"`
+	LogErrors    map[string]string              `json:"log_errors,omitempty"`
+}
+
+func diagnose(args []string) error {
+	flags := flag.NewFlagSet("diagnose", flag.ContinueOnError)
+	stateDir := flags.String("state-dir", "", "management-state directory")
+	runtimeDir := flags.String("runtime-dir", "", "SSH runtime directory")
+	targetID := flags.String("target-id", "", "target id")
+	address := flags.String("address", "", "host:port address")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *stateDir == "" || *runtimeDir == "" || *targetID == "" || *address == "" {
+		return errors.New("state-dir, runtime-dir, target-id, and address are required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	state, gateway, closeFn, err := targetStack(*stateDir, *runtimeDir)
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+	id := managementstate.TargetID(*targetID)
+	if err := state.Change(ctx, func(ch *managementstate.Change) error { return ch.SetTargetAddress(id, *address) }); err != nil {
+		return err
+	}
+
+	diagnostics := liveDiagnostics{Logs: map[string]string{}, LogErrors: map[string]string{}}
+	observed, inspectErr := gateway.Inspect(ctx, id)
+	if inspectErr != nil {
+		diagnostics.InspectError = inspectErr.Error()
+	} else {
+		diagnostics.Observed = &observed
+	}
+	for _, unit := range []string{"cloud-final.service", "fail2ban.service"} {
+		var buffer bytes.Buffer
+		err := gateway.Logs(ctx, id, targetgateway.LogRequest{Kind: targetgateway.LogJournalUnit, Name: unit, Scope: "system", Lines: 200}, func(chunk targetgateway.LogChunk) error {
+			_, writeErr := buffer.Write(chunk.Data)
+			return writeErr
+		})
+		if err != nil {
+			diagnostics.LogErrors[unit] = err.Error()
+			continue
+		}
+		diagnostics.Logs[unit] = buffer.String()
+	}
+	if len(diagnostics.Logs) == 0 {
+		diagnostics.Logs = nil
+	}
+	if len(diagnostics.LogErrors) == 0 {
+		diagnostics.LogErrors = nil
+	}
+	return json.NewEncoder(os.Stdout).Encode(diagnostics)
+}
+
+func reportRetry(stage string, attempt int, err error) {
+	if attempt == 1 || attempt%10 == 0 {
+		fmt.Fprintf(os.Stderr, "%s not ready (attempt %d): %v\n", stage, attempt, err)
+	}
+}
+
+func targetStack(stateDir, runtimeDir string) (*managementstate.Store, *targetgateway.Gateway, func(), error) {
 	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 	state, err := managementstate.Open(stateDir)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 	gateway, err := targetgateway.New(state, runtimeDir)
 	if err != nil {
 		_ = state.Close()
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
-	bundles, err := executionbundle.NewAssembler(filepath.Join(stateDir, "live-test-bundles"))
-	if err != nil {
-		_ = state.Close()
-		return nil, nil, nil, nil, err
-	}
-	compiler, err := deployment.New(rejectingRegistry{}, bundles)
-	if err != nil {
-		_ = state.Close()
-		return nil, nil, nil, nil, err
-	}
-	return state, gateway, compiler, func() { _ = state.Close() }, nil
+	return state, gateway, func() { _ = state.Close() }, nil
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
