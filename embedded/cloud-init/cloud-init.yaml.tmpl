@@ -154,8 +154,21 @@ runcmd:
       vpsmith_mark verify-ufw-status
       ufw_status=$(ufw status verbose)
       printf '%s\n' "$ufw_status" | grep -Fxq 'Status: active'
-      vpsmith_mark verify-ufw-defaults
-      printf '%s\n' "$ufw_status" | grep -Fq 'Default: deny (incoming), allow (outgoing), deny (routed)'
+      ufw_defaults=$(printf '%s\n' "$ufw_status" | sed -n 's/^Default:[[:space:]]*//p')
+      printf 'vpsmith-primary-ufw-defaults=%s\n' "$ufw_defaults"
+      vpsmith_mark verify-ufw-default-incoming
+      printf '%s\n' "$ufw_defaults" | tr ',' '\n' | grep -Eq '^[[:space:]]*deny[[:space:]]+\(incoming\)[[:space:]]*$'
+      vpsmith_mark verify-ufw-default-outgoing
+      printf '%s\n' "$ufw_defaults" | tr ',' '\n' | grep -Eq '^[[:space:]]*allow[[:space:]]+\(outgoing\)[[:space:]]*$'
+      vpsmith_mark verify-ufw-default-routed
+      if printf '%s\n' "$ufw_defaults" | tr ',' '\n' | grep -Eq '^[[:space:]]*deny[[:space:]]+\(routed\)[[:space:]]*$'; then
+        :
+      elif printf '%s\n' "$ufw_defaults" | tr ',' '\n' | grep -Eq '^[[:space:]]*disabled[[:space:]]+\(routed\)[[:space:]]*$'; then
+        [ "$(sysctl -n net.ipv4.ip_forward)" = 0 ]
+        [ "$(sysctl -n net.ipv6.conf.all.forwarding)" = 0 ]
+      else
+        exit 1
+      fi
       vpsmith_mark verify-ufw-logging
       printf '%s\n' "$ufw_status" | grep -Eq '^Logging: on \(low\)$'
       vpsmith_mark verify-ufw-public-ports
