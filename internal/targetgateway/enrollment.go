@@ -12,15 +12,15 @@ import (
 )
 
 type PrimaryHardeningFacts struct {
-	SSHConfigValid                   bool
-	SSHValues                        map[string]string
-	UFWActive                        bool
-	UFWDefaultIncoming               string
-	UFWDefaultRouted                 string
-	UFWAllowedPublicTCPPorts         []int
-	Fail2banSSHActive                bool
-	UnattendedUpgradesEnabled        bool
-	AutomaticRebootDisabled          bool
+	SSHConfigValid            bool
+	SSHValues                 map[string]string
+	UFWActive                 bool
+	UFWDefaultIncoming        string
+	UFWDefaultRouted          string
+	UFWAllowedPublicTCPPorts  []int
+	Fail2banSSHActive         bool
+	UnattendedUpgradesEnabled bool
+	AutomaticRebootDisabled   bool
 }
 
 type EnrollmentResult struct {
