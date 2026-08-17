@@ -315,11 +315,6 @@ func (s *Snapshot) normalize() {
 }
 
 func validateDesired(value DesiredState) error {
-	if value.CloudInit.DefinitionVersion != "" {
-		if strings.TrimSpace(value.CloudInit.Hostname) == "" || strings.TrimSpace(value.CloudInit.Timezone) == "" || strings.TrimSpace(value.CloudInit.Administrator) == "" {
-			return errors.New("cloud-init desired state requires hostname, timezone, and administrator")
-		}
-	}
 	seen := map[ModuleInstanceID]struct{}{}
 	for _, module := range value.Modules {
 		if module.InstanceID == "" || module.PackageID == "" || strings.TrimSpace(module.Version) == "" {
