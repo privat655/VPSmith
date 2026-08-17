@@ -21,7 +21,7 @@ func (r *enrollmentProcessRunner) Run(_ context.Context, name string, args ...st
 }
 
 func validPrimaryHardening() PrimaryHardeningFacts {
-	return PrimaryHardeningFacts{SSHConfigValid: true, SSHValues: map[string]string{
+	return PrimaryHardeningFacts{RootPasswordLocked: true, SSHConfigValid: true, SSHValues: map[string]string{
 		"permitrootlogin": "no", "passwordauthentication": "no", "kbdinteractiveauthentication": "no",
 		"pubkeyauthentication": "yes", "authenticationmethods": "publickey", "permitemptypasswords": "no",
 		"logingracetime": "20", "maxauthtries": "3", "maxsessions": "3", "maxstartups": "10:30:60",
@@ -72,7 +72,7 @@ func TestEnrollRequiresStatusDesiredVersionAndEffectiveHardeningAndLeavesCoreAbs
 	if !result.Observed.CloudInit.Present || result.Observed.Core.Present || len(result.Observed.Modules) != 0 {
 		t.Fatalf("unexpected enrolled state: %#v", result.Observed)
 	}
-	if !result.Observed.Host.PrimaryHardening.SSHConfigValid || !result.PrimaryHardening.Fail2banRecidiveActive {
+	if !result.Observed.Host.PrimaryHardening.RootPasswordLocked || !result.Observed.Host.PrimaryHardening.SSHConfigValid || !result.PrimaryHardening.Fail2banRecidiveActive {
 		t.Fatalf("canonical Primary Host Hardening facts missing: %#v", result)
 	}
 }
@@ -94,6 +94,21 @@ func TestEnrollRejectsSuccessfulStatusWhenHardeningIsWrong(t *testing.T) {
 	_, err := gateway.Enroll(ctx, "target-a")
 	if err == nil || !strings.Contains(err.Error(), "passwordauthentication") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestEnrollRejectsUnlockedRootOrUnexpectedFirewallAllow(t *testing.T) {
+	facts := validPrimaryHardening()
+	facts.RootPasswordLocked = false
+	gateway, ctx := enrollmentGateway(t, enrolledObserved(), facts)
+	if _, err := gateway.Enroll(ctx, "target-a"); err == nil || !strings.Contains(err.Error(), "root password") {
+		t.Fatalf("unlocked root accepted: %v", err)
+	}
+	facts = validPrimaryHardening()
+	facts.UFWUnexpectedPublicAllow = true
+	gateway, ctx = enrollmentGateway(t, enrolledObserved(), facts)
+	if _, err := gateway.Enroll(ctx, "target-a"); err == nil {
+		t.Fatal("unexpected public UFW allow accepted")
 	}
 }
 
@@ -151,7 +166,7 @@ func TestPrimaryHardeningInspectionUsesReadOnlySudoAndCompleteEffectiveProbe(t *
 		t.Fatalf("runner call = %s %#v", runner.name, runner.args)
 	}
 	remoteCommand := runner.args[len(runner.args)-1]
-	for _, want := range []string{"sudo -n sh -eu -c", "user='", "authenticationmethods", "logingracetime", "maxauthtries", "maxsessions", "maxstartups", "compression", "loglevel", "ufw_logging_low", "fail2ban-client status recidive", "!seen[p]++"} {
+	for _, want := range []string{"sudo -n sh -eu -c", "getent shadow root", "root_locked", "user='", "authenticationmethods", "logingracetime", "maxauthtries", "maxsessions", "maxstartups", "compression", "loglevel", "ufw_logging_low", "ufw_unexpected_allow", "fail2ban-client status recidive"} {
 		if !strings.Contains(remoteCommand, want) {
 			t.Fatalf("primary hardening probe missing %q: %q", want, remoteCommand)
 		}
