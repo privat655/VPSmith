@@ -23,6 +23,9 @@ func TestProductionInspectionUsesOnlyKnownReadOnlyShapes(t *testing.T) {
 	if !observed.Host.Reachable || !observed.CloudInit.Present || !observed.Core.Present || !observed.Core.Podman.Rootless || len(observed.Modules) != 1 || len(observed.LinkNetworks) != 1 {
 		t.Fatalf("inspection = %#v", observed)
 	}
+	if !observed.Host.PrimaryHardening.SSHConfigValid || !observed.Host.PrimaryHardening.UFWLoggingLow || !observed.Host.PrimaryHardening.Fail2banRecidiveActive {
+		t.Fatalf("primary hardening facts = %#v", observed.Host.PrimaryHardening)
+	}
 	if !observed.Core.Caddy.ConfigChecked || !observed.Core.Caddy.ConfigValid {
 		t.Fatalf("caddy facts = %#v", observed.Core.Caddy)
 	}
@@ -75,6 +78,13 @@ func inspectionFixture(t *testing.T) func(string, []string) ([]byte, []byte, err
 			return []byte("hostname\tvps-1\nkernel\tLinux 6.1\nos_id\tdebian\nos_version\t12\nroot_total\t100000\nroot_available\t50000\nmem_total\t200000\nmem_available\t100000\nswap_total\t10000\nswap_free\t8000\nreboot\t0\nufw\t1\nfail2ban\t1\n"), nil, nil
 		case strings.Contains(command, cloudInitStatusPath):
 			return []byte("status=ok\nversion=1\nfinished_at=2026-08-16T09:00:00Z\n"), nil, nil
+		case strings.HasPrefix(command, "sudo -n sh -eu -c ") &&
+			strings.Contains(command, "ssh_config_valid") &&
+			strings.Contains(command, "sshd -T -C user=") &&
+			strings.Contains(command, "ufw status verbose") &&
+			strings.Contains(command, "fail2ban-client status recidive") &&
+			strings.Contains(command, "apt-config shell"):
+			return []byte("ssh_config_valid\t1\nssh_permitrootlogin\tno\nssh_passwordauthentication\tno\nssh_kbdinteractiveauthentication\tno\nssh_pubkeyauthentication\tyes\nssh_authenticationmethods\tpublickey\nssh_permitemptypasswords\tno\nssh_logingracetime\t20\nssh_maxauthtries\t3\nssh_maxsessions\t3\nssh_maxstartups\t10:30:60\nssh_x11forwarding\tno\nssh_allowagentforwarding\tno\nssh_allowtcpforwarding\tno\nssh_allowstreamlocalforwarding\tno\nssh_permittunnel\tno\nssh_gatewayports\tno\nssh_permituserenvironment\tno\nssh_compression\tno\nssh_loglevel\tVERBOSE\nufw_active\t1\nufw_logging_low\t1\nufw_incoming\tdeny\nufw_routed\tdeny\nufw_port\t22\nufw_port\t80\nufw_port\t443\nfail2ban_sshd\t1\nfail2ban_recidive\t1\nunattended\t1\nautomatic_reboot\tfalse\n"), nil, nil
 		case strings.Contains(command, coreInventoryPath):
 			return []byte(`{"source_id":"core-source","version":"1","package_sha256":"` + sha + `","units":[{"name":"core.service","scope":"user"}],"containers":["caddy"],"networks":["core-net"],"caddy":{"unit":{"name":"core.service","scope":"user"},"container":"caddy","config_path":"/etc/vpsmith/Caddyfile"},"authelia":{"unit":{"name":"core.service","scope":"user"},"container":"caddy"},"managed_artifacts":["/etc/vpsmith/Caddyfile"],"execution_proofs":[{"id":"exec-1","outcome":"success","sha256":"` + sha + `"}]}`), nil, nil
 		case strings.Contains(command, moduleInventoryPath):
