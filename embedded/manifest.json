@@ -7,7 +7,7 @@
     "cloud_init": {
       "version": "0.1.0",
       "path": "cloud-init",
-      "sha256": "13ee918f098a10b926f3651981ea186ea43de80c7d6046114492829ba02cc846"
+      "sha256": "f111907e6d850f6713028079bbdc0e7b608e55bb52acad7715eb140236ae78f1"
     },
     "core": {
       "version": "0.1.0-scaffold.1",
