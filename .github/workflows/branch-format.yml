@@ -22,7 +22,8 @@ jobs:
       - name: Restore accidental inspector overwrite and format Go sources
         run: |
           if ! grep -q 'func (t \*sshTransport) hostFacts' internal/targetgateway/inspector.go; then
-            git show 6435f7e12859eed745d0b31640ddd88c67bda873:internal/targetgateway/inspector.go > internal/targetgateway/inspector.go
+            git fetch --no-tags --depth=1 origin 6435f7e12859eed745d0b31640ddd88c67bda873
+            git show FETCH_HEAD:internal/targetgateway/inspector.go > internal/targetgateway/inspector.go
             sed -i 's/managementstate\.CoreSourceID/managementstate.SourceSnapshotID/g' internal/targetgateway/inspector.go
           fi
           gofmt -w $(find . -name '*.go' -type f -print)
