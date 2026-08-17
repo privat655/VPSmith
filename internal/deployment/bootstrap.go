@@ -55,8 +55,8 @@ func ValidateBootstrapDesired(desired managementstate.CloudInitDesiredState) err
 	if strings.TrimSpace(desired.Administrator) == "" {
 		return errors.New("administrator is required")
 	}
-	if !safeAdministratorToken.MatchString(desired.Administrator) {
-		return errors.New("administrator must start with a lowercase letter and contain only lowercase letters, digits, underscore, or hyphen")
+	if desired.Administrator == "root" || !safeAdministratorToken.MatchString(desired.Administrator) {
+		return errors.New("administrator must be a non-root lowercase account name using only letters, digits, underscore, or hyphen")
 	}
 	return nil
 }
