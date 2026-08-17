@@ -48,7 +48,7 @@ func TestPrepareBootstrapProducesOnlyPrimaryCloudInit(t *testing.T) {
 		"AllowAgentForwarding no", "AllowTcpForwarding no", "AllowStreamLocalForwarding no", "PermitTunnel no", "GatewayPorts no", "PermitUserEnvironment no",
 		"Compression no", "LogLevel VERBOSE", "ufw default deny incoming", "ufw default deny routed", "ufw allow 22/tcp", "ufw allow 80/tcp", "ufw allow 443/tcp",
 		"ufw logging low", "fail2ban-client status sshd", "fail2ban-client status recidive", "Unattended-Upgrade::Automatic-Reboot \"false\"",
-		"sshd -t", "sshd -T", "status=ok", "version=0.1.0", "mktemp /var/lib/vpsmith/cloud-init/.status", "mv -f \"$tmp\" /var/lib/vpsmith/cloud-init/status",
+		"sshd -t", "sshd -T", "status=ok", "version=0.1.0", "mktemp /var/lib/vpsmith/cloud-init/.status", "mv -f \"$vpsmith_tmp\" /var/lib/vpsmith/cloud-init/status",
 	}
 	for _, want := range required {
 		if !strings.Contains(text, want) {
@@ -85,7 +85,7 @@ func TestPrepareBootstrapWritesSuccessOnlyAfterEffectiveValidation(t *testing.T)
 	rootValidation := strings.Index(text, "getent shadow root")
 	lastValidation := strings.Index(text, "fail2ban-client status recidive")
 	success := strings.Index(text, "status=ok")
-	publish := strings.Index(text, "mv -f \"$tmp\" /var/lib/vpsmith/cloud-init/status")
+	publish := strings.Index(text, "mv -f \"$vpsmith_tmp\" /var/lib/vpsmith/cloud-init/status")
 	if clear < 0 || rootValidation < 0 || lastValidation < 0 || success < 0 || publish < 0 || !(clear < rootValidation && rootValidation < lastValidation && lastValidation < success && success < publish) {
 		t.Fatalf("atomic status ordering is unsafe: clear=%d root=%d validation=%d success=%d publish=%d", clear, rootValidation, lastValidation, success, publish)
 	}
