@@ -70,7 +70,36 @@ def redact(data: bytes, secrets: dict[str, bytes]) -> str:
 
 
 def run_action(script: Path, admin_user: str, secrets: dict[str, bytes]) -> tuple[int, str, str]:
-    cp = subprocess.run(["runuser", "-u", admin_user, "--", str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    # Registered module actions are intentionally shell scripts, but they are
+    # not a privilege boundary. Run each action in a transient systemd sandbox
+    # so the Cloud-init administrator's host-wide sudo permission is never
+    # inherited by module code. The action can read host state and use normal
+    # unprivileged interfaces, but cannot elevate privileges or write the host
+    # filesystem/Core configuration directly.
+    command = [
+        "systemd-run",
+        "--quiet",
+        "--wait",
+        "--pipe",
+        "--collect",
+        f"--uid={admin_user}",
+        "--property=Type=exec",
+        "--property=UMask=0077",
+        "--property=NoNewPrivileges=yes",
+        "--property=CapabilityBoundingSet=",
+        "--property=AmbientCapabilities=",
+        "--property=ProtectSystem=strict",
+        "--property=ProtectHome=read-only",
+        "--property=PrivateDevices=yes",
+        "--property=ProtectKernelTunables=yes",
+        "--property=ProtectKernelModules=yes",
+        "--property=ProtectKernelLogs=yes",
+        "--property=ProtectControlGroups=yes",
+        "--property=RestrictSUIDSGID=yes",
+        "--property=LockPersonality=yes",
+        str(script),
+    ]
+    cp = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     return cp.returncode, redact(cp.stdout, secrets), redact(cp.stderr, secrets)
 
 
