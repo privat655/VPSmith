@@ -58,27 +58,28 @@ type Step struct {
 }
 
 type Manifest struct {
-	FormatVersion   int               `json:"format_version"`
-	Runner          RunnerIdentity    `json:"runner"`
-	BundleID        string            `json:"bundle_id"`
-	Kind            Kind              `json:"kind"`
-	TargetID        string            `json:"target_vps_id"`
-	SubjectKind     string            `json:"subject_kind"`
-	SubjectID       string            `json:"subject_id"`
-	SubjectIdentity string            `json:"subject_identity"`
-	PackageID       string            `json:"package_id,omitempty"`
-	PackageSHA256   string            `json:"package_sha256,omitempty"`
-	Version         string            `json:"version"`
-	Sources         []SourceIdentity  `json:"sources"`
-	Images          []ImageIdentity   `json:"images"`
-	Artifacts       []Artifact        `json:"artifacts"`
-	Actions         []Action          `json:"actions"`
-	Secrets         []SecretReference `json:"secrets"`
-	Preconditions   []Precondition    `json:"preconditions"`
-	ExpectedPost    json.RawMessage   `json:"expected_post_state"`
-	Validations     []ValidationSpec  `json:"validations"`
-	Steps           []Step            `json:"steps"`
-	BackupRequired  bool              `json:"backup_required"`
+	FormatVersion       int               `json:"format_version"`
+	Runner              RunnerIdentity    `json:"runner"`
+	BundleID            string            `json:"bundle_id"`
+	Kind                Kind              `json:"kind"`
+	TargetID            string            `json:"target_vps_id"`
+	SubjectKind         string            `json:"subject_kind"`
+	SubjectID           string            `json:"subject_id"`
+	SubjectIdentity     string            `json:"subject_identity"`
+	PackageID           string            `json:"package_id,omitempty"`
+	PackageSHA256       string            `json:"package_sha256,omitempty"`
+	Version             string            `json:"version"`
+	Sources             []SourceIdentity  `json:"sources"`
+	Images              []ImageIdentity   `json:"images"`
+	Artifacts           []Artifact        `json:"artifacts"`
+	Actions             []Action          `json:"actions"`
+	ActionWritablePaths []string          `json:"action_writable_paths"`
+	Secrets             []SecretReference `json:"secrets"`
+	Preconditions       []Precondition    `json:"preconditions"`
+	ExpectedPost        json.RawMessage   `json:"expected_post_state"`
+	Validations         []ValidationSpec  `json:"validations"`
+	Steps               []Step            `json:"steps"`
+	BackupRequired      bool              `json:"backup_required"`
 }
 
 type Artifact struct {
@@ -102,25 +103,26 @@ type File struct {
 }
 
 type Input struct {
-	Kind            Kind
-	TargetID        string
-	SubjectKind     string
-	SubjectID       string
-	SubjectIdentity string
-	PackageID       string
-	PackageSHA256   string
-	Version         string
-	Sources         []SourceIdentity
-	Images          []ImageIdentity
-	Files           []File
-	Actions         []File
-	ActionIDs       []string
-	Secrets         []SecretReference
-	Preconditions   []Precondition
-	ExpectedPost    any
-	Validations     []ValidationSpec
-	Steps           []Step
-	BackupRequired  bool
+	Kind                Kind
+	TargetID            string
+	SubjectKind         string
+	SubjectID           string
+	SubjectIdentity     string
+	PackageID           string
+	PackageSHA256       string
+	Version             string
+	Sources             []SourceIdentity
+	Images              []ImageIdentity
+	Files               []File
+	Actions             []File
+	ActionIDs           []string
+	ActionWritablePaths []string
+	Secrets             []SecretReference
+	Preconditions       []Precondition
+	ExpectedPost        any
+	Validations         []ValidationSpec
+	Steps               []Step
+	BackupRequired      bool
 }
 
 type Bundle struct {
