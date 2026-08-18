@@ -73,7 +73,7 @@ type Manifest struct {
 	Images              []ImageIdentity   `json:"images"`
 	Artifacts           []Artifact        `json:"artifacts"`
 	Actions             []Action          `json:"actions"`
-	ActionWritablePaths []string          `json:"action_writable_paths"`
+	ActionWritablePaths []string          `json:"action_writable_paths,omitempty"`
 	Secrets             []SecretReference `json:"secrets"`
 	Preconditions       []Precondition    `json:"preconditions"`
 	ExpectedPost        json.RawMessage   `json:"expected_post_state"`
