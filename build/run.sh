@@ -26,7 +26,8 @@ set -- run --rm \
   --network host \
   --read-only \
   --cap-drop=ALL \
-  --security-opt=no-new-privileges
+  --security-opt=no-new-privileges \
+  --tmpfs /run/vpsmith:rw,noexec,nosuid,nodev,size=16m,mode=0700
 if [ "$engine" = "podman" ]; then
   set -- "$@" --read-only-tmpfs=false
 fi
