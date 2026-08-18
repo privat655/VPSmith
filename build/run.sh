@@ -27,7 +27,7 @@ set -- run --rm \
   --read-only \
   --cap-drop=ALL \
   --security-opt=no-new-privileges \
-  --tmpfs /run/vpsmith:rw,noexec,nosuid,nodev,size=16m,mode=0700
+  --tmpfs /run/vpsmith:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=0700
 if [ "$engine" = "podman" ]; then
   set -- "$@" --read-only-tmpfs=false
 fi
