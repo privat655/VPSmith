@@ -132,7 +132,7 @@ fi
 
 embedded_json=$("$engine" run --rm --entrypoint /usr/local/bin/vpsmith-studio "$image" version)
 printf '%s\n' "$embedded_json" | grep -F '"sha256"' >/dev/null || {
-  printf 'ERROR: embedded source identities are unavailable in runtime image\n' "$embedded_json" >&2
+  printf 'ERROR: embedded source identities are unavailable in runtime image\n' >&2
   exit 1
 }
 
