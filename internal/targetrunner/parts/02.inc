@@ -87,6 +87,7 @@ def run_action(
     # individual action. Validation receives no writable exception at all.
     command = [
         "systemd-run",
+        "--system",
         "--quiet",
         "--wait",
         "--pipe",
