@@ -30,6 +30,7 @@ var (
 	stateDir        = "/var/lib/vpsmith/state"
 	sourcesDir      = "/var/lib/vpsmith/sources"
 	backupsDir      = "/var/lib/vpsmith/backups"
+	sshRuntimeDir   = "/run/vpsmith/ssh"
 )
 
 func main() {
@@ -81,7 +82,7 @@ func serve() error {
 
 	ctx := context.Background()
 	app, err := application.Open(ctx, application.Paths{
-		StateDir: stateDir, SourcesDir: sourcesDir, BackupsDir: backupsDir, EmbeddedRoot: embeddedRoot,
+		StateDir: stateDir, SourcesDir: sourcesDir, BackupsDir: backupsDir, EmbeddedRoot: embeddedRoot, SSHRuntimeDir: sshRuntimeDir,
 	})
 	if err != nil {
 		return fmt.Errorf("open VPSmith application: %w", err)
