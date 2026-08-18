@@ -24,7 +24,7 @@
                 proof["steps"].append(result)
                 write_proof(proof_file, proof)
                 if code != 0:
-                    raise RuntimeError(f"step {step.get('id')} exited with {code}")
+                    raise RuntimeError(f"step {step.get('id')} exited with {code}: {err}")
             except Exception as exc:
                 if not result.get("finished_at"):
                     result.update(exit_code=1, stdout="", stderr="", finished_at=now())
