@@ -137,16 +137,15 @@ type serviceRef struct {
 }
 
 type coreInventory struct {
-	SourceID         managementstate.SourceSnapshotID              `json:"source_id"`
-	Version          string                                        `json:"version"`
-	PackageSHA256    string                                        `json:"package_sha256"`
-	Units            []unitRef                                     `json:"units"`
-	Containers       []string                                      `json:"containers"`
-	Networks         []string                                      `json:"networks"`
-	Caddy            *caddyRef                                     `json:"caddy,omitempty"`
-	Authelia         *serviceRef                                   `json:"authelia,omitempty"`
-	ManagedArtifacts []string                                      `json:"managed_artifacts"`
-	ExecutionProofs  []managementstate.ExecutionProofObservedState `json:"execution_proofs"`
+	SourceID         managementstate.SourceSnapshotID `json:"source_id"`
+	Version          string                           `json:"version"`
+	PackageSHA256    string                           `json:"package_sha256"`
+	Units            []unitRef                        `json:"units"`
+	Containers       []string                         `json:"containers"`
+	Networks         []string                         `json:"networks"`
+	Caddy            *caddyRef                        `json:"caddy,omitempty"`
+	Authelia         *serviceRef                      `json:"authelia,omitempty"`
+	ManagedArtifacts []string                         `json:"managed_artifacts"`
 }
 
 type moduleInventoryDocument struct {
@@ -171,12 +170,12 @@ type linkInventoryDocument struct {
 }
 
 func (t *sshTransport) coreFacts(ctx context.Context, sess session) (managementstate.CoreObservedState, error) {
-	raw, err := t.readOptional(ctx, sess, coreInventoryPath)
+	raw, proofs, err := t.coreObservation(ctx, sess)
 	if err != nil {
 		return managementstate.CoreObservedState{}, err
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return managementstate.CoreObservedState{Present: false}, nil
+		return managementstate.CoreObservedState{Present: false, ExecutionProofs: proofs}, nil
 	}
 	var inventory coreInventory
 	if err := json.Unmarshal(raw, &inventory); err != nil {
@@ -184,7 +183,7 @@ func (t *sshTransport) coreFacts(ctx context.Context, sess session) (managements
 	}
 	facts := managementstate.CoreObservedState{
 		Present: true, SourceID: inventory.SourceID, Version: inventory.Version, PackageSHA256: inventory.PackageSHA256,
-		ExecutionProofs: append([]managementstate.ExecutionProofObservedState(nil), inventory.ExecutionProofs...),
+		ExecutionProofs: proofs,
 	}
 	facts.Podman, err = t.podmanFacts(ctx, sess)
 	if err != nil {
