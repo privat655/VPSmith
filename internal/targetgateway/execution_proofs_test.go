@@ -20,11 +20,10 @@ func TestProductionInspectionImportsCanonicalTargetExecutionProofs(t *testing.T)
 		}
 		command := args[len(args)-1]
 		switch {
-		case strings.Contains(command, coreInventoryPath):
+		case strings.Contains(command, coreInventoryPath) && strings.Contains(command, "/var/tmp/vpsmith-execution") && strings.Contains(command, "sha256sum"):
 			sha := strings.Repeat("a", 64)
-			return []byte(`{"source_id":"core-source","version":"1","package_sha256":"` + sha + `","execution_proofs":[{"id":"stale-inventory","kind":"installation","outcome":"failed","sha256":"` + strings.Repeat("c", 64) + `"}]}`), nil, nil
-		case strings.Contains(command, "/var/tmp/vpsmith-execution") && strings.Contains(command, "/proofs") && strings.Contains(command, "sha256sum"):
-			return []byte("run-canonical\t" + proofSHA256 + "\t" + proofJSON + "\n"), nil, nil
+			inventory := `{"source_id":"core-source","version":"1","package_sha256":"` + sha + `","execution_proofs":[{"id":"stale-inventory","kind":"installation","outcome":"failed","sha256":"` + strings.Repeat("c", 64) + `"}]}`
+			return []byte(inventory + executionProofsMarker + "PROOF\trun-canonical\t" + proofSHA256 + "\t" + proofJSON + "\n"), nil, nil
 		default:
 			return base(name, args)
 		}
@@ -46,5 +45,13 @@ func TestProductionInspectionImportsCanonicalTargetExecutionProofs(t *testing.T)
 	proof := observed.Core.ExecutionProofs[0]
 	if proof.ID != "run-canonical" || proof.Kind != "migration" || proof.Outcome != "success" || proof.SHA256 != proofSHA256 {
 		t.Fatalf("execution proof = %#v", proof)
+	}
+}
+
+func TestExecutionProofObservationRejectsHashMismatch(t *testing.T) {
+	const proofJSON = `{"bundle_id":"bundle-canonical","bundle_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","format_version":1,"kind":"migration","run_id":"run-canonical","status":"success"}`
+	_, err := parseExecutionProofFacts([]byte("PROOF\trun-canonical\t" + strings.Repeat("b", 64) + "\t" + proofJSON + "\n"))
+	if err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
+		t.Fatalf("hash mismatch error = %v", err)
 	}
 }
