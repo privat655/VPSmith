@@ -102,7 +102,12 @@ func parseExecutionProofFacts(raw []byte) ([]managementstate.ExecutionProofObser
 			continue
 		}
 		result = append(result, managementstate.ExecutionProofObservedState{
-			ID: runID, Kind: proof.Kind, Outcome: proof.Status, SHA256: digest,
+			ID:           runID,
+			BundleID:     proof.BundleID,
+			BundleSHA256: proof.BundleSHA256,
+			Kind:         proof.Kind,
+			Outcome:      proof.Status,
+			SHA256:       digest,
 		})
 	}
 	if err := scanner.Err(); err != nil {
