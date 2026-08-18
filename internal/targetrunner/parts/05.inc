@@ -10,7 +10,12 @@
                     script = action_dir / (str(step.get("action")) + ".sh")
                     atomic_write(script, data, 0o500)
                     os.chown(script, uid, gid)
-                    code, out, err = run_action(script, args.admin_user, secrets)
+                    code, out, err = run_action(
+                        script,
+                        args.admin_user,
+                        secrets,
+                        manifest.get("subject_kind") == "module",
+                    )
                 else:
                     raise RuntimeError("unsupported execution step")
                 result.update(exit_code=code, stdout=out, stderr=err, finished_at=now())
