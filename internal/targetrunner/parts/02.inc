@@ -69,16 +69,22 @@ def redact(data: bytes, secrets: dict[str, bytes]) -> str:
     return out.decode("utf-8", "replace")
 
 
-def run_action(script: Path, admin_user: str, secrets: dict[str, bytes], restrict_host: bool) -> tuple[int, str, str]:
+def run_action(
+    script: Path,
+    admin_user: str,
+    secrets: dict[str, bytes],
+    restrict_host: bool,
+    writable_paths: list[str],
+    mutating: bool,
+) -> tuple[int, str, str]:
     if not restrict_host:
         cp = subprocess.run(["runuser", "-u", admin_user, "--", str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         return cp.returncode, redact(cp.stdout, secrets), redact(cp.stderr, secrets)
 
     # module.yaml actions are intentionally shell scripts, but module code must
     # not inherit the Cloud-init administrator's host-wide sudo authority.
-    # systemd creates the mount/capability sandbox before dropping to the
-    # administrator UID, so the action can inspect host state and use ordinary
-    # unprivileged interfaces without being able to patch Core or the host.
+    # The writable scope comes from module persistent_storage, never from an
+    # individual action. Validation receives no writable exception at all.
     command = [
         "systemd-run",
         "--quiet",
@@ -100,8 +106,10 @@ def run_action(script: Path, admin_user: str, secrets: dict[str, bytes], restric
         "--property=ProtectControlGroups=yes",
         "--property=RestrictSUIDSGID=yes",
         "--property=LockPersonality=yes",
-        str(script),
     ]
+    if mutating and writable_paths:
+        command.append("--property=ReadWritePaths=" + " ".join(writable_paths))
+    command.append(str(script))
     cp = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     return cp.returncode, redact(cp.stdout, secrets), redact(cp.stderr, secrets)
 
