@@ -97,19 +97,19 @@ func TestCompilerGeneratedValidationUsesProductionExecutionPathAndCannotMutateHo
 	}
 	const instance = "validation-1"
 	source := deployment.FrozenModuleSource{
-		InstanceID: instance,
-		SourceID: "source-validation-1",
-		PackageID: "pkg-validation-1",
+		InstanceID:    instance,
+		SourceID:      "source-validation-1",
+		PackageID:     "pkg-validation-1",
 		PackageSHA256: strings.Repeat("d", 64),
-		PackageFS: validationModulePackage(),
+		PackageFS:     validationModulePackage(),
 	}
 	prepared, err := compiler.Prepare(ctx, deployment.Request{
-		Operation: deployment.Validate,
-		TargetID: string(sandboxTargetID),
+		Operation:       deployment.Validate,
+		TargetID:        string(sandboxTargetID),
 		SubjectInstance: instance,
-		DesiredModules: []deployment.DesiredModule{{InstanceID: instance, Source: source}},
-		Observed: deployment.ObservedState{TargetID: string(sandboxTargetID)},
-		CoreContract: "1.0",
+		DesiredModules:  []deployment.DesiredModule{{InstanceID: instance, Source: source}},
+		Observed:        deployment.ObservedState{TargetID: string(sandboxTargetID)},
+		CoreContract:    "1.0",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +200,7 @@ fi
 exit 0
 `
 	return fstest.MapFS{
-		"module.yaml": &fstest.MapFile{Data: []byte(moduleYAML)},
+		"module.yaml":         &fstest.MapFile{Data: []byte(moduleYAML)},
 		"actions/validate.sh": &fstest.MapFile{Data: []byte(action)},
 	}
 }
