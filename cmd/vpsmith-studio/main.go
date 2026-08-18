@@ -15,9 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/privat655/VPSmith/internal/managementstate"
+	"github.com/privat655/VPSmith/internal/application"
 	"github.com/privat655/VPSmith/internal/releaseinfo"
-	"github.com/privat655/VPSmith/internal/sourcelibrary"
 	"github.com/privat655/VPSmith/internal/studio"
 )
 
@@ -73,32 +72,25 @@ func serve() error {
 		return err
 	}
 	for _, mount := range []struct{ name, path string }{
-		{name: "state", path: stateDir},
-		{name: "sources", path: sourcesDir},
-		{name: "backups", path: backupsDir},
+		{name: "state", path: stateDir}, {name: "sources", path: sourcesDir}, {name: "backups", path: backupsDir},
 	} {
 		if err := requireWritableDirectory(mount.name, mount.path); err != nil {
 			return err
 		}
 	}
 
-	state, err := managementstate.Open(stateDir)
+	ctx := context.Background()
+	app, err := application.Open(ctx, application.Paths{
+		StateDir: stateDir, SourcesDir: sourcesDir, BackupsDir: backupsDir, EmbeddedRoot: embeddedRoot,
+	})
 	if err != nil {
-		return fmt.Errorf("open canonical management state: %w", err)
+		return fmt.Errorf("open VPSmith application: %w", err)
 	}
 	defer func() {
-		if err := state.Close(); err != nil {
-			log.Printf("ERROR: close management state: %v", err)
+		if err := app.Close(); err != nil {
+			log.Printf("ERROR: close VPSmith application: %v", err)
 		}
 	}()
-
-	sources, err := sourcelibrary.New(sourcesDir, embeddedRoot, state, sourcelibrary.NewGithubRemote())
-	if err != nil {
-		return fmt.Errorf("open canonical source library: %w", err)
-	}
-	if _, err := sources.ImportEmbedded(context.Background()); err != nil {
-		return fmt.Errorf("import embedded source snapshots: %w", err)
-	}
 
 	listener, err := net.Listen("tcp4", listenAddress)
 	if err != nil {
@@ -110,10 +102,8 @@ func serve() error {
 	}
 
 	server := &http.Server{
-		Handler:           studio.Handler(identity),
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       30 * time.Second,
+		Handler: studio.Handler(identity, app), ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second,
 	}
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

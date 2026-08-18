@@ -106,23 +106,65 @@ jobs:
               echo 'QEMU exited before an SSH host key became reachable' >&2
               exit 1
             fi
-            if [ $((attempt % 10)) -eq 0 ]; then
-              echo "waiting for real SSH host key (attempt $attempt)" >&2
-            fi
+            if [ $((attempt % 10)) -eq 0 ]; then echo "waiting for real SSH host key (attempt $attempt)" >&2; fi
             sleep 2
           done
           echo 'SSH host key did not become reachable' >&2
           exit 1
 
-      - name: Verify real TOFU and enrollment through VPSmith
+      - name: Observe host key without establishing trust
+        run: |
+          set -o pipefail
+          target_id=$(cat live/target-id)
+          live/vpsmith-step7-live observe \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --address 127.0.0.1:2222 \
+            --output "$PWD/live/out/host-key-observation.json" \
+            --timeout 10m \
+            | tee live/out/observe.json
+
+      - name: Prove enrollment is blocked before explicit confirmation
+        run: |
+          target_id=$(cat live/target-id)
+          if live/vpsmith-step7-live enroll \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --timeout 5s \
+            >live/out/pre-confirm-enroll.stdout 2>live/out/pre-confirm-enroll.stderr; then
+            echo 'Enrollment unexpectedly succeeded before explicit host-key confirmation' >&2
+            exit 1
+          fi
+          grep -q 'ssh host key is not confirmed' live/out/pre-confirm-enroll.stderr
+
+      - name: Explicitly confirm the displayed host key observation
+        run: |
+          target_id=$(cat live/target-id)
+          cat live/out/host-key-observation.json
+          live/vpsmith-step7-live confirm \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --observation "$PWD/live/out/host-key-observation.json"
+
+      - name: Enroll through strict confirmed-key SSH
         run: |
           set -o pipefail
           target_id=$(cat live/target-id)
           live/vpsmith-step7-live enroll \
             --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
             --runtime-dir "$PWD/live/ssh-runtime" \
             --target-id "$target_id" \
-            --address 127.0.0.1:2222 \
             --timeout 10m \
             2> >(tee live/out/enroll.stderr >&2) \
             | tee live/out/enrollment.json
@@ -134,10 +176,11 @@ jobs:
             echo '## VPSmith Step 7 live verification'
             echo
             echo '- Fresh Ubuntu 24.04 VM booted from pinned cloud image.'
-            echo '- VPSmith rendered the released embedded Cloud-init snapshot.'
+            echo '- VPSmith rendered the released embedded Cloud-init snapshot through the production application composition.'
             echo '- VPSmith generated the per-target SSH identity and inserted only its public key.'
-            echo '- TOFU host-key observation and explicit confirmation succeeded.'
-            echo '- Strict-key SSH enrollment succeeded.'
+            echo '- Host-key observation alone did not establish trust; enrollment was blocked.'
+            echo '- A separate explicit confirmation step persisted the exact re-observed host key.'
+            echo '- Strict-key SSH enrollment then succeeded.'
             echo '- Cloud-init status and effective Primary Host Hardening succeeded.'
             echo '- Core remained absent, Modules remained absent, and swap remained zero.'
             echo
@@ -153,9 +196,10 @@ jobs:
             target_id=$(cat live/target-id)
             live/vpsmith-step7-live diagnose \
               --state-dir "$PWD/live/state" \
+              --sources-dir "$PWD/live/sources" \
+              --embedded-root "$PWD/embedded" \
               --runtime-dir "$PWD/live/ssh-runtime" \
               --target-id "$target_id" \
-              --address 127.0.0.1:2222 \
               >live/out/diagnostics.json \
               2>live/out/diagnostics.stderr || true
           fi
@@ -168,10 +212,7 @@ jobs:
             pid=$(cat live/qemu.pid 2>/dev/null || true)
             if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
               kill "$pid" || true
-              for attempt in $(seq 1 20); do
-                kill -0 "$pid" 2>/dev/null || exit 0
-                sleep 1
-              done
+              for attempt in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || exit 0; sleep 1; done
               kill -9 "$pid" 2>/dev/null || true
             fi
           fi

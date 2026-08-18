@@ -17,13 +17,13 @@ func testBootstrapRequest(t *testing.T) BootstrapRequest {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sourceID := managementstate.SourceSnapshotID("source_cloud_test")
+	sourceSHA := strings.Repeat("a", 64)
 	return BootstrapRequest{
-		TargetID: "target_a",
-		Desired: managementstate.CloudInitDesiredState{
-			DefinitionVersion: "0.1.0", Hostname: "vps-a", Timezone: "Europe/Berlin", Administrator: "admin",
-		},
+		TargetID:     "target_a",
+		Desired:      managementstate.CloudInitDesiredState{SourceSnapshotID: sourceID, DefinitionVersion: "0.1.0", SourceSHA256: sourceSHA, Hostname: "vps-a", Timezone: "Europe/Berlin", Administrator: "admin"},
 		SSHPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyOnly vpsmith:target_a",
-		Source:       BootstrapSource{Version: "0.1.0", SHA256: strings.Repeat("a", 64), Template: templateBytes},
+		Source:       BootstrapSource{SnapshotID: sourceID, Version: "0.1.0", SHA256: sourceSHA, Template: templateBytes},
 	}
 }
 
@@ -41,24 +41,13 @@ func TestPrepareBootstrapProducesOnlyPrimaryCloudInit(t *testing.T) {
 		t.Fatalf("identity=%q want source version %q", got.Identity, req.Source.Version)
 	}
 	text := string(got.Bytes)
-	required := []string{
-		"ssh_deletekeys: true", "ssh_genkeytypes: [ed25519, rsa]", "passwd -l root", "getent shadow root",
-		"PermitRootLogin no", "PasswordAuthentication no", "KbdInteractiveAuthentication no", "PubkeyAuthentication yes",
-		"AuthenticationMethods publickey", "PermitEmptyPasswords no", "LoginGraceTime 20", "MaxAuthTries 3", "MaxSessions 3", "MaxStartups 10:30:60",
-		"AllowAgentForwarding no", "AllowTcpForwarding no", "AllowStreamLocalForwarding no", "PermitTunnel no", "GatewayPorts no", "PermitUserEnvironment no",
-		"Compression no", "LogLevel VERBOSE", "ufw default deny incoming", "ufw default deny routed", "ufw allow 22/tcp", "ufw allow 80/tcp", "ufw allow 443/tcp",
-		"ufw logging low", "fail2ban-client status sshd", "fail2ban-client status recidive", "Unattended-Upgrade::Automatic-Reboot \"false\"",
-		"sshd -t", "sshd -T", "status=ok", "version=0.1.0", "mktemp /var/lib/vpsmith/cloud-init/.status", "mv -f \"$vpsmith_tmp\" /var/lib/vpsmith/cloud-init/status",
-	}
+	required := []string{"ssh_deletekeys: true", "ssh_genkeytypes: [ed25519, rsa]", "passwd -l root", "getent shadow root", "PermitRootLogin no", "PasswordAuthentication no", "KbdInteractiveAuthentication no", "PubkeyAuthentication yes", "AuthenticationMethods publickey", "PermitEmptyPasswords no", "LoginGraceTime 20", "MaxAuthTries 3", "MaxSessions 3", "MaxStartups 10:30:60", "AllowAgentForwarding no", "AllowTcpForwarding no", "AllowStreamLocalForwarding no", "PermitTunnel no", "GatewayPorts no", "PermitUserEnvironment no", "Compression no", "LogLevel VERBOSE", "ufw default deny incoming", "ufw default deny routed", "ufw allow 22/tcp", "ufw allow 80/tcp", "ufw allow 443/tcp", "ufw logging low", "fail2ban-client status sshd", "fail2ban-client status recidive", "Unattended-Upgrade::Automatic-Reboot \"false\"", "sshd -t", "sshd -T", "status=ok", "version=0.1.0", "mktemp /var/lib/vpsmith/cloud-init/.status", "mv -f \"$vpsmith_tmp\" /var/lib/vpsmith/cloud-init/status"}
 	for _, want := range required {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	forbidden := []string{
-		"podman", "quadlet", "caddy", "authelia", "/var/lib/vpsmith/core", "/var/lib/vpsmith/modules",
-		"/swapfile", "mkswap", "swapon", "swapoff", "github.com", "ghcr.io", "curl ", "wget ", "hashed_passwd", "chpasswd:",
-	}
+	forbidden := []string{"podman", "quadlet", "caddy", "authelia", "/var/lib/vpsmith/core", "/var/lib/vpsmith/modules", "/swapfile", "mkswap", "swapon", "swapoff", "github.com", "ghcr.io", "curl ", "wget ", "hashed_passwd", "chpasswd:"}
 	lower := strings.ToLower(text)
 	for _, bad := range forbidden {
 		if strings.Contains(lower, strings.ToLower(bad)) {
@@ -71,6 +60,22 @@ func TestPrepareBootstrapProducesOnlyPrimaryCloudInit(t *testing.T) {
 	}
 	if bytes.Contains(got.Bytes, []byte("OPENSSH PRIVATE KEY")) {
 		t.Error("private key leaked")
+	}
+}
+
+func TestPrepareBootstrapRejectsProvenanceMismatch(t *testing.T) {
+	c := newCompiler(t, "docker.io/example/unused:1")
+	cases := []func(*BootstrapRequest){
+		func(req *BootstrapRequest) { req.Desired.SourceSnapshotID = "source_other" },
+		func(req *BootstrapRequest) { req.Desired.DefinitionVersion = "other" },
+		func(req *BootstrapRequest) { req.Desired.SourceSHA256 = strings.Repeat("b", 64) },
+	}
+	for i, mutate := range cases {
+		req := testBootstrapRequest(t)
+		mutate(&req)
+		if _, err := c.PrepareBootstrap(req); err == nil {
+			t.Fatalf("provenance mismatch case %d accepted", i)
+		}
 	}
 }
 
@@ -110,25 +115,9 @@ func TestPrepareBootstrapIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestPrepareBootstrapRejectsDesiredVersionDifferentFromFrozenSource(t *testing.T) {
-	c := newCompiler(t, "docker.io/example/unused:1")
-	req := testBootstrapRequest(t)
-	req.Desired.DefinitionVersion = "other"
-	if _, err := c.PrepareBootstrap(req); err == nil {
-		t.Fatal("mismatched desired/source version accepted")
-	}
-}
-
 func TestPrepareBootstrapRejectsUnsafeTargetScalars(t *testing.T) {
 	c := newCompiler(t, "docker.io/example/unused:1")
-	cases := []func(*BootstrapRequest){
-		func(req *BootstrapRequest) { req.Desired.Timezone = "Etc/UTC #comment" },
-		func(req *BootstrapRequest) { req.Desired.Timezone = "../UTC" },
-		func(req *BootstrapRequest) { req.Desired.Hostname = "Bad_Host" },
-		func(req *BootstrapRequest) { req.Desired.Hostname = "-host" },
-		func(req *BootstrapRequest) { req.Desired.Administrator = "root" },
-		func(req *BootstrapRequest) { req.Desired.Administrator = "Admin" },
-	}
+	cases := []func(*BootstrapRequest){func(req *BootstrapRequest) { req.Desired.Timezone = "Etc/UTC #comment" }, func(req *BootstrapRequest) { req.Desired.Timezone = "../UTC" }, func(req *BootstrapRequest) { req.Desired.Hostname = "Bad_Host" }, func(req *BootstrapRequest) { req.Desired.Hostname = "-host" }, func(req *BootstrapRequest) { req.Desired.Administrator = "root" }, func(req *BootstrapRequest) { req.Desired.Administrator = "Admin" }}
 	for i, mutate := range cases {
 		req := testBootstrapRequest(t)
 		mutate(&req)

@@ -22,13 +22,11 @@ func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate(t *testi
 		t.Fatal(err)
 	}
 	targetID := mustID(t, managementstate.NewTargetID)
-	coreEmbedded := mustID(t, managementstate.NewCoreSourceID)
-	coreTarget := mustID(t, managementstate.NewCoreSourceID)
+	coreSource := mustID(t, managementstate.NewSourceSnapshotID)
+	coreObservedSource := mustID(t, managementstate.NewSourceSnapshotID)
 	packageID := mustID(t, managementstate.NewModulePackageID)
-	targetPackageID := mustID(t, managementstate.NewModulePackageID)
 	instanceID := mustID(t, managementstate.NewModuleInstanceID)
 	var secretID managementstate.SecretID
-
 	err = store.Change(ctx, func(change *managementstate.Change) error {
 		var err error
 		secretID, err = change.CreateSecret("n8n-encryption-key", managementstate.SecretGenerated)
@@ -41,35 +39,27 @@ func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate(t *testi
 		if err := change.CreateTarget(managementstate.TargetRegistration{ID: targetID, Address: "203.0.113.10", SSHUser: "dev", SSHTrust: managementstate.TrustUnknown}); err != nil {
 			return err
 		}
-		if err := change.PutCoreSource(managementstate.CoreSource{ID: coreEmbedded, Role: managementstate.CoreSourceEmbedded, Version: "1.0.0", SHA256: strings.Repeat("a", 64)}); err != nil {
+		if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: coreSource, Kind: managementstate.SourceCore, Version: "1.0.0", SHA256: strings.Repeat("a", 64), StorageRef: "snapshots/sha256/core-a"}); err != nil {
 			return err
 		}
-		if err := change.PutCoreSource(managementstate.CoreSource{ID: coreTarget, Role: managementstate.CoreSourceTarget, TargetID: targetID, Version: "0.9.0", SHA256: strings.Repeat("b", 64)}); err != nil {
-			return err
-		}
-		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: packageID, Role: managementstate.ModuleSourceRemote, Owner: "example", Repository: "modules", Ref: "main", Commit: "remote-commit", Version: "2.0.0", PackageSHA256: strings.Repeat("c", 64)}); err != nil {
-			return err
-		}
-		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: targetPackageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "deployed-commit", Version: "1.9.0", PackageSHA256: strings.Repeat("d", 64)}); err != nil {
+		if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: coreObservedSource, Kind: managementstate.SourceCore, Version: "0.9.0", SHA256: strings.Repeat("b", 64), StorageRef: "snapshots/sha256/core-b"}); err != nil {
 			return err
 		}
 		return change.SetDesiredState(targetID, managementstate.DesiredState{
-			Core:    managementstate.CoreDesiredState{SourceID: coreEmbedded, Version: "1.0.0", Swap: managementstate.SwapDesiredState{Mode: "none"}},
+			Core:    managementstate.CoreDesiredState{SourceID: coreSource, Version: "1.0.0", Swap: managementstate.SwapDesiredState{Mode: "none"}},
 			Modules: []managementstate.ModuleDesiredState{{InstanceID: instanceID, PackageID: packageID, Version: "2.0.0", SecretIDs: []managementstate.SecretID{secretID}, Resources: managementstate.ResourceOverrides{MemoryBytes: 1024}}},
 		})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	beforeObserved, err := store.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	beforeDesired := beforeObserved.Targets[0].Desired
-
 	err = store.Change(ctx, func(change *managementstate.Change) error {
-		return change.RecordObservedState(targetID, managementstate.ObservedState{ObservedAt: "2026-08-16T08:00:00Z", Core: managementstate.CoreObservedState{SourceID: coreTarget, Version: "0.9.0", Running: true}, Modules: []managementstate.ModuleObservedState{{InstanceID: instanceID, PackageID: targetPackageID, Version: "1.9.0", Running: false, Health: "stopped"}}})
+		return change.RecordObservedState(targetID, managementstate.ObservedState{ObservedAt: "2026-08-16T08:00:00Z", Core: managementstate.CoreObservedState{SourceID: coreObservedSource, Version: "0.9.0", Running: true}, Modules: []managementstate.ModuleObservedState{{InstanceID: instanceID, PackageID: packageID, Version: "1.9.0", Running: false, Health: "stopped"}}})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,13 +74,9 @@ func TestPersistentStateRoundTripKeepsDesiredObservedAndSourcesSeparate(t *testi
 	if afterObserved.Targets[0].Observed.Core.Version != "0.9.0" {
 		t.Fatalf("observed core version = %q", afterObserved.Targets[0].Observed.Core.Version)
 	}
-	if afterObserved.CoreSources[0].Role == afterObserved.CoreSources[1].Role {
-		t.Fatal("embedded and target core source roles collapsed")
+	if len(afterObserved.Sources.Artifacts) != 2 {
+		t.Fatalf("canonical source artifacts = %d, want 2", len(afterObserved.Sources.Artifacts))
 	}
-	if afterObserved.ModuleSources[0].Commit == afterObserved.ModuleSources[1].Commit {
-		t.Fatal("remote and target module commits collapsed")
-	}
-
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -336,51 +322,47 @@ func TestSourceSyncAndStudioBasisChangesNeverChangeTargetState(t *testing.T) {
 	store := mustMemory(t)
 	ctx := context.Background()
 	targetID := mustID(t, managementstate.NewTargetID)
-	oldCore := mustID(t, managementstate.NewCoreSourceID)
-	newCore := mustID(t, managementstate.NewCoreSourceID)
+	oldCore := mustID(t, managementstate.NewSourceSnapshotID)
+	newCore := mustID(t, managementstate.NewSourceSnapshotID)
 	installedPackageID := mustID(t, managementstate.NewModulePackageID)
 	remotePackageID := mustID(t, managementstate.NewModulePackageID)
+	installedModule := mustID(t, managementstate.NewSourceSnapshotID)
+	remoteModule := mustID(t, managementstate.NewSourceSnapshotID)
 	if err := store.Change(ctx, func(change *managementstate.Change) error {
 		if err := change.CreateTarget(managementstate.TargetRegistration{ID: targetID, Address: "203.0.113.15", SSHUser: "dev"}); err != nil {
 			return err
 		}
-		if err := change.PutCoreSource(managementstate.CoreSource{ID: oldCore, Role: managementstate.CoreSourceTarget, TargetID: targetID, Version: "old", SHA256: strings.Repeat("a", 64)}); err != nil {
+		if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: oldCore, Kind: managementstate.SourceCore, Version: "old", SHA256: strings.Repeat("a", 64), StorageRef: "snapshots/sha256/core-old"}); err != nil {
 			return err
 		}
-		if err := change.PutModuleSource(managementstate.ModuleSource{PackageID: installedPackageID, Role: managementstate.ModuleSourceTarget, TargetID: targetID, Commit: "installed", Version: "1", PackageSHA256: strings.Repeat("b", 64)}); err != nil {
-			return err
-		}
-		return nil
+		return change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: installedModule, Kind: managementstate.SourceCustomModule, PackageID: installedPackageID, PackagePath: "modules/installed", Version: "1", Commit: "installed", SHA256: strings.Repeat("b", 64), StorageRef: "snapshots/sha256/module-installed"})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := store.Snapshot(ctx)
+	before, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.Change(ctx, func(change *managementstate.Change) error {
-		if err := change.PutCoreSource(managementstate.CoreSource{ID: newCore, Role: managementstate.CoreSourceEmbedded, Version: "new", SHA256: strings.Repeat("c", 64)}); err != nil {
+		if err := change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: newCore, Kind: managementstate.SourceCore, Version: "new", SHA256: strings.Repeat("c", 64), StorageRef: "snapshots/sha256/core-new"}); err != nil {
 			return err
 		}
-		return change.PutModuleSource(managementstate.ModuleSource{PackageID: remotePackageID, Role: managementstate.ModuleSourceRemote, Owner: "owner", Repository: "repo", Ref: "main", Commit: "remote-new", Version: "2", PackageSHA256: strings.Repeat("d", 64)})
+		return change.RegisterSourceArtifact(managementstate.SourceArtifact{ID: remoteModule, Kind: managementstate.SourceCustomModule, PackageID: remotePackageID, PackagePath: "modules/remote", Version: "2", Commit: "remote-new", SHA256: strings.Repeat("d", 64), StorageRef: "snapshots/sha256/module-remote"})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := store.Snapshot(ctx)
+	after, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(before.Targets, after.Targets) {
 		t.Fatal("source synchronization changed target state")
 	}
-	var targetCore managementstate.CoreSourceID
-	var targetCommit string
-	for _, source := range after.CoreSources {
-		if source.Role == managementstate.CoreSourceTarget {
-			targetCore = source.ID
-		}
+	if len(before.Sources.Artifacts) != 2 || len(after.Sources.Artifacts) != 4 {
+		t.Fatalf("canonical source snapshot history before=%d after=%d", len(before.Sources.Artifacts), len(after.Sources.Artifacts))
 	}
-	for _, source := range after.ModuleSources {
-		if source.Role == managementstate.ModuleSourceTarget {
-			targetCommit = source.Commit
-		}
-	}
-	if targetCore != oldCore || targetCommit != "installed" {
-		t.Fatal("source synchronization changed target source identities")
+	if after.Sources.Artifacts[0].ID == "" {
+		t.Fatal("canonical source identities were not retained")
 	}
 }
 

@@ -50,7 +50,9 @@ func (c *Coordinator) PrepareNewTarget(ctx context.Context, req NewTargetRequest
 		return PreparedTarget{}, fmt.Errorf("read released Cloud-init template: %w", err)
 	}
 	desired := managementstate.CloudInitDesiredState{
+		SourceSnapshotID:  source.ID,
 		DefinitionVersion: source.Version,
+		SourceSHA256:      source.SHA256,
 		Hostname:          req.Hostname,
 		Timezone:          req.Timezone,
 		Administrator:     req.Administrator,
@@ -71,12 +73,12 @@ func (c *Coordinator) PrepareNewTarget(ctx context.Context, req NewTargetRequest
 	}
 	artifact, err := c.compiler.PrepareBootstrap(deployment.BootstrapRequest{
 		TargetID: string(id), Desired: desired, SSHPublicKey: identity.PublicKey,
-		Source: deployment.BootstrapSource{Version: source.Version, SHA256: source.SHA256, Template: templateBytes},
+		Source: deployment.BootstrapSource{SnapshotID: source.ID, Version: source.Version, SHA256: source.SHA256, Template: templateBytes},
 	})
 	if err != nil {
 		return PreparedTarget{}, err
 	}
-	desired.DefinitionSHA256 = artifact.SHA256
+	desired.RenderedSHA256 = artifact.SHA256
 	if err := c.state.Change(ctx, func(ch *managementstate.Change) error {
 		return ch.SetDesiredState(id, managementstate.DesiredState{CloudInit: desired})
 	}); err != nil {

@@ -24,9 +24,10 @@ var (
 )
 
 type BootstrapSource struct {
-	Version  string
-	SHA256   string
-	Template []byte
+	SnapshotID managementstate.SourceSnapshotID
+	Version    string
+	SHA256     string
+	Template   []byte
 }
 
 type BootstrapRequest struct {
@@ -36,9 +37,6 @@ type BootstrapRequest struct {
 	Source       BootstrapSource
 }
 
-// ValidateBootstrapDesired checks target-specific values before any persistent
-// target or SSH identity is created. PrepareBootstrap repeats this validation
-// so direct compiler callers get the same contract.
 func ValidateBootstrapDesired(desired managementstate.CloudInitDesiredState) error {
 	if strings.TrimSpace(desired.Hostname) == "" {
 		return errors.New("hostname is required")
@@ -61,9 +59,9 @@ func ValidateBootstrapDesired(desired managementstate.CloudInitDesiredState) err
 	return nil
 }
 
-// PrepareBootstrap compiles the complete provider-facing Cloud-init document
-// from one frozen source snapshot. Cloud-init is deliberately not an execution
-// bundle: it runs before SSH trust exists and contains only Part 1.
+// PrepareBootstrap renders target-specific bytes from exactly one frozen source
+// snapshot. The source snapshot identity and source digest are validated before
+// rendering so provenance cannot be replaced by the rendered document digest.
 func (c *Compiler) PrepareBootstrap(req BootstrapRequest) (BootstrapArtifact, error) {
 	if c == nil {
 		return BootstrapArtifact{}, errors.New("deployment compiler is required")
@@ -89,6 +87,9 @@ func validateBootstrapRequest(req BootstrapRequest) error {
 	if err := ValidateBootstrapDesired(req.Desired); err != nil {
 		return err
 	}
+	if req.Source.SnapshotID == "" {
+		return errors.New("source snapshot id is required")
+	}
 	if strings.TrimSpace(req.Source.Version) == "" {
 		return errors.New("source version is required")
 	}
@@ -101,8 +102,14 @@ func validateBootstrapRequest(req BootstrapRequest) error {
 	if len(req.Source.Template) == 0 {
 		return errors.New("cloud-init source template is required")
 	}
-	if req.Desired.DefinitionVersion != "" && req.Desired.DefinitionVersion != req.Source.Version {
+	if req.Desired.SourceSnapshotID != req.Source.SnapshotID {
+		return errors.New("cloud-init desired source snapshot does not match frozen source")
+	}
+	if req.Desired.DefinitionVersion != req.Source.Version {
 		return errors.New("cloud-init desired version does not match frozen source version")
+	}
+	if req.Desired.SourceSHA256 != req.Source.SHA256 {
+		return errors.New("cloud-init desired source sha256 does not match frozen source")
 	}
 	fields := strings.Fields(req.SSHPublicKey)
 	if len(fields) < 2 || fields[0] != "ssh-ed25519" || !sshBase64Token.MatchString(fields[1]) || strings.ContainsAny(req.SSHPublicKey, "\r\n\x00") {
@@ -135,18 +142,9 @@ func renderCloudInit(req BootstrapRequest) ([]byte, error) {
 		return nil, fmt.Errorf("parse Cloud-init source template: %w", err)
 	}
 	keyFields := strings.Fields(req.SSHPublicKey)
-	data := struct {
-		Hostname             string
-		Timezone             string
-		Administrator        string
-		SSHPublicKey         string
-		SSHPublicKeyMaterial string
-		DefinitionVersion    string
-	}{
-		Hostname: req.Desired.Hostname, Timezone: req.Desired.Timezone,
-		Administrator: req.Desired.Administrator, SSHPublicKey: req.SSHPublicKey,
-		SSHPublicKeyMaterial: keyFields[0] + " " + keyFields[1],
-		DefinitionVersion:    req.Source.Version,
+	data := struct{ Hostname, Timezone, Administrator, SSHPublicKey, SSHPublicKeyMaterial, DefinitionVersion string }{
+		Hostname: req.Desired.Hostname, Timezone: req.Desired.Timezone, Administrator: req.Desired.Administrator,
+		SSHPublicKey: req.SSHPublicKey, SSHPublicKeyMaterial: keyFields[0] + " " + keyFields[1], DefinitionVersion: req.Source.Version,
 	}
 	var rendered bytes.Buffer
 	if err := tmpl.Execute(&rendered, data); err != nil {

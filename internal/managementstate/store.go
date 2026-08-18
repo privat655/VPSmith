@@ -156,9 +156,12 @@ func loadOrCreateKey(path string, databaseExisted bool) ([]byte, error) {
 }
 
 func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s == nil || s.db == nil {
+	if s.db == nil {
 		return nil
 	}
 	for i := range s.key {
@@ -233,7 +236,7 @@ func (c *Change) SetSSHTrust(targetID TargetID, hostKey, fingerprint string, tru
 	if err := c.rejectKnownSecretMaterial(struct{ HostKey, Fingerprint string }{hostKey, fingerprint}); err != nil {
 		return err
 	}
-	result, err := c.conn.ExecContext(c.ctx, `UPDATE targets SET ssh_host_key=?, ssh_host_fingerprint=?, ssh_trust=? WHERE id=?`, hostKey, fingerprint, trust, targetID)
+	result, err := c.conn.ExecContext(c.ctx, `UPDATE targets SET ssh_host_key=?,ssh_host_fingerprint=?,ssh_trust=? WHERE id=?`, hostKey, fingerprint, trust, targetID)
 	if err != nil {
 		return fmt.Errorf("update target ssh trust: %w", err)
 	}
@@ -278,52 +281,6 @@ func (c *Change) RecordObservedState(targetID TargetID, value ObservedState) err
 		return fmt.Errorf("record observed state: %w", err)
 	}
 	return requireOne(result, "target")
-}
-
-func (c *Change) PutCoreSource(value CoreSource) error {
-	if value.ID == "" || strings.TrimSpace(value.Version) == "" || strings.TrimSpace(value.SHA256) == "" {
-		return errors.New("core source id, version, and sha256 are required")
-	}
-	if value.Role != CoreSourceEmbedded && value.Role != CoreSourceLocal && value.Role != CoreSourceTarget {
-		return errors.New("invalid core source role")
-	}
-	if value.Role == CoreSourceTarget && value.TargetID == "" {
-		return errors.New("target core source requires target id")
-	}
-	if value.Role != CoreSourceTarget && value.TargetID != "" {
-		return errors.New("only target core source may have target id")
-	}
-	if err := c.rejectKnownSecretMaterial(value); err != nil {
-		return err
-	}
-	_, err := c.conn.ExecContext(c.ctx, `INSERT INTO core_sources(id,role,target_id,version,sha256,base_source_id) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET role=excluded.role,target_id=excluded.target_id,version=excluded.version,sha256=excluded.sha256,base_source_id=excluded.base_source_id`, value.ID, value.Role, value.TargetID, value.Version, value.SHA256, value.BaseSourceID)
-	if err != nil {
-		return fmt.Errorf("put core source: %w", err)
-	}
-	return nil
-}
-
-func (c *Change) PutModuleSource(value ModuleSource) error {
-	if value.PackageID == "" || strings.TrimSpace(value.Version) == "" || strings.TrimSpace(value.PackageSHA256) == "" {
-		return errors.New("module source package id, version, and package sha256 are required")
-	}
-	if value.Role != ModuleSourceRemote && value.Role != ModuleSourceLocal && value.Role != ModuleSourceTarget {
-		return errors.New("invalid module source role")
-	}
-	if value.Role == ModuleSourceTarget && value.TargetID == "" {
-		return errors.New("target module source requires target id")
-	}
-	if value.Role != ModuleSourceTarget && value.TargetID != "" {
-		return errors.New("only target module source may have target id")
-	}
-	if err := c.rejectKnownSecretMaterial(value); err != nil {
-		return err
-	}
-	_, err := c.conn.ExecContext(c.ctx, `INSERT INTO module_sources(package_id,role,target_id,owner,repository,ref,commit_sha,base_commit,version,package_sha256) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(package_id,role,target_id) DO UPDATE SET owner=excluded.owner,repository=excluded.repository,ref=excluded.ref,commit_sha=excluded.commit_sha,base_commit=excluded.base_commit,version=excluded.version,package_sha256=excluded.package_sha256`, value.PackageID, value.Role, value.TargetID, value.Owner, value.Repository, value.Ref, value.Commit, value.BaseCommit, value.Version, value.PackageSHA256)
-	if err != nil {
-		return fmt.Errorf("put module source: %w", err)
-	}
-	return nil
 }
 
 func (c *Change) CreateSecret(name string, origin SecretOrigin) (SecretID, error) {
@@ -383,7 +340,7 @@ func (c *Change) RotateSecret(id SecretID, value []byte) error {
 	if err != nil {
 		return err
 	}
-	result, err := c.conn.ExecContext(c.ctx, `UPDATE secrets SET ciphertext=?, rotated_at=?, rotation_count=rotation_count+1 WHERE id=? AND ciphertext IS NOT NULL`, ciphertext, nowUTC(), id)
+	result, err := c.conn.ExecContext(c.ctx, `UPDATE secrets SET ciphertext=?,rotated_at=?,rotation_count=rotation_count+1 WHERE id=? AND ciphertext IS NOT NULL`, ciphertext, nowUTC(), id)
 	if err != nil {
 		return fmt.Errorf("rotate secret: %w", err)
 	}
@@ -477,6 +434,12 @@ func (c *Change) secretReferenced(id SecretID) (bool, error) {
 	if count > 0 {
 		return true, nil
 	}
+	if err := c.conn.QueryRowContext(c.ctx, `SELECT COUNT(*) FROM custom_module_github WHERE pat_secret_id=?`, id).Scan(&count); err != nil {
+		return false, fmt.Errorf("inspect custom module github secret references: %w", err)
+	}
+	if count > 0 {
+		return true, nil
+	}
 	rows, err := c.conn.QueryContext(c.ctx, `SELECT desired_json FROM targets`)
 	if err != nil {
 		return false, fmt.Errorf("inspect desired secret references: %w", err)
@@ -551,8 +514,9 @@ func (c *Change) assertMaterialAbsentFromDomain(material []byte) error {
 	}
 	for _, query := range []string{
 		`SELECT name FROM secrets`,
-		`SELECT version||sha256||base_source_id FROM core_sources`,
-		`SELECT owner||repository||ref||commit_sha||base_commit||version||package_sha256 FROM module_sources`,
+		`SELECT kind||package_id||package_path||version||commit_sha||sha256||storage_ref FROM source_artifacts`,
+		`SELECT kind||package_id||package_path||base_source_id||base_commit||current_sha256||storage_ref||synchronized_commit FROM source_workspaces`,
+		`SELECT owner||repository||ref FROM custom_module_github`,
 		`SELECT kind||version||sha256 FROM execution_bundles`,
 		`SELECT outcome FROM execution_records`,
 		`SELECT location_ref||sha256 FROM backups`,
@@ -649,10 +613,8 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err := rows.Close(); err != nil {
 		return result, err
 	}
-	if err := s.readCoreSources(ctx, &result); err != nil {
-		return result, err
-	}
-	if err := s.readModuleSources(ctx, &result); err != nil {
+	result.Sources, err = s.readCanonicalSources(ctx)
+	if err != nil {
 		return result, err
 	}
 	if err := s.readSecrets(ctx, &result); err != nil {
@@ -668,36 +630,6 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 	return result, nil
 }
 
-func (s *Store) readCoreSources(ctx context.Context, out *Snapshot) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,role,target_id,version,sha256,base_source_id FROM core_sources ORDER BY id`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var v CoreSource
-		if err := rows.Scan(&v.ID, &v.Role, &v.TargetID, &v.Version, &v.SHA256, &v.BaseSourceID); err != nil {
-			return err
-		}
-		out.CoreSources = append(out.CoreSources, v)
-	}
-	return rows.Err()
-}
-func (s *Store) readModuleSources(ctx context.Context, out *Snapshot) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT package_id,role,target_id,owner,repository,ref,commit_sha,base_commit,version,package_sha256 FROM module_sources ORDER BY package_id,role,target_id`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var v ModuleSource
-		if err := rows.Scan(&v.PackageID, &v.Role, &v.TargetID, &v.Owner, &v.Repository, &v.Ref, &v.Commit, &v.BaseCommit, &v.Version, &v.PackageSHA256); err != nil {
-			return err
-		}
-		out.ModuleSources = append(out.ModuleSources, v)
-	}
-	return rows.Err()
-}
 func (s *Store) readSecrets(ctx context.Context, out *Snapshot) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,origin,created_at,rotated_at,rotation_count,ciphertext IS NOT NULL FROM secrets ORDER BY id`)
 	if err != nil {
@@ -713,6 +645,7 @@ func (s *Store) readSecrets(ctx context.Context, out *Snapshot) error {
 	}
 	return rows.Err()
 }
+
 func (s *Store) readHistory(ctx context.Context, out *Snapshot) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,target_id,kind,version,sha256,created_at FROM execution_bundles ORDER BY id`)
 	if err != nil {
@@ -743,6 +676,7 @@ func (s *Store) readHistory(ctx context.Context, out *Snapshot) error {
 	}
 	return rows.Err()
 }
+
 func (s *Store) readBackups(ctx context.Context, out *Snapshot) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,artifact_type,target_id,module_instance_id,created_at,location_ref,sha256 FROM backups ORDER BY id`)
 	if err != nil {

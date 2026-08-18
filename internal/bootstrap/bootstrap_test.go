@@ -85,8 +85,11 @@ func TestPrepareNewTargetUsesReleasedCloudInitSnapshotAndPerTargetIdentity(t *te
 		t.Fatalf("targets=%d", len(snapshot.Targets))
 	}
 	desired := snapshot.Targets[0].Desired.CloudInit
-	if desired.DefinitionVersion != prepared.CloudInitSource.Version || desired.DefinitionSHA256 != prepared.CloudInit.SHA256 {
-		t.Fatalf("desired Cloud-init is not bound to rendered released source: %#v", desired)
+	if desired.SourceSnapshotID != prepared.CloudInitSource.ID || desired.DefinitionVersion != prepared.CloudInitSource.Version || desired.SourceSHA256 != prepared.CloudInitSource.SHA256 || desired.RenderedSHA256 != prepared.CloudInit.SHA256 {
+		t.Fatalf("desired Cloud-init provenance is incomplete: %#v", desired)
+	}
+	if desired.SourceSHA256 == "" || desired.RenderedSHA256 == "" {
+		t.Fatal("source and rendered SHA identities must both be persisted")
 	}
 }
 

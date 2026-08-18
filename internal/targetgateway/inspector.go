@@ -137,7 +137,7 @@ type serviceRef struct {
 }
 
 type coreInventory struct {
-	SourceID         managementstate.CoreSourceID                  `json:"source_id"`
+	SourceID         managementstate.SourceSnapshotID              `json:"source_id"`
 	Version          string                                        `json:"version"`
 	PackageSHA256    string                                        `json:"package_sha256"`
 	Units            []unitRef                                     `json:"units"`

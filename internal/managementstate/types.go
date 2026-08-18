@@ -11,10 +11,9 @@ import (
 	"time"
 )
 
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 type TargetID string
-type CoreSourceID string
 type ModulePackageID string
 type ModuleInstanceID string
 type SecretID string
@@ -22,8 +21,7 @@ type ExecutionBundleID string
 type ExecutionRecordID string
 type BackupArtifactID string
 
-func NewTargetID() (TargetID, error)         { v, e := newID("target"); return TargetID(v), e }
-func NewCoreSourceID() (CoreSourceID, error) { v, e := newID("core-src"); return CoreSourceID(v), e }
+func NewTargetID() (TargetID, error) { v, e := newID("target"); return TargetID(v), e }
 func NewModulePackageID() (ModulePackageID, error) {
 	v, e := newID("module-pkg")
 	return ModulePackageID(v), e
@@ -82,16 +80,22 @@ type Target struct {
 	Observed            ObservedState `json:"observed"`
 }
 
+// CloudInitDesiredState keeps released-source provenance separate from the
+// target-specific rendered document identity. SourceSnapshotID and
+// SourceSHA256 identify the immutable Source Library input; RenderedSHA256
+// identifies exactly the provider-facing Cloud-init bytes.
 type CloudInitDesiredState struct {
-	DefinitionVersion string `json:"definition_version,omitempty"`
-	DefinitionSHA256  string `json:"definition_sha256,omitempty"`
-	Hostname          string `json:"hostname,omitempty"`
-	Timezone          string `json:"timezone,omitempty"`
-	Administrator     string `json:"administrator,omitempty"`
+	SourceSnapshotID  SourceSnapshotID `json:"source_snapshot_id,omitempty"`
+	DefinitionVersion string           `json:"definition_version,omitempty"`
+	SourceSHA256      string           `json:"source_sha256,omitempty"`
+	RenderedSHA256    string           `json:"rendered_sha256,omitempty"`
+	Hostname          string           `json:"hostname,omitempty"`
+	Timezone          string           `json:"timezone,omitempty"`
+	Administrator     string           `json:"administrator,omitempty"`
 }
 
 type CoreDesiredState struct {
-	SourceID CoreSourceID     `json:"source_id,omitempty"`
+	SourceID SourceSnapshotID `json:"source_id,omitempty"`
 	Version  string           `json:"version,omitempty"`
 	Swap     SwapDesiredState `json:"swap"`
 }
@@ -138,7 +142,7 @@ type CloudInitObservedState struct {
 
 type CoreObservedState struct {
 	Present          bool                           `json:"present"`
-	SourceID         CoreSourceID                   `json:"source_id,omitempty"`
+	SourceID         SourceSnapshotID               `json:"source_id,omitempty"`
 	Version          string                         `json:"version,omitempty"`
 	PackageSHA256    string                         `json:"package_sha256,omitempty"`
 	Running          bool                           `json:"running"`
@@ -175,44 +179,6 @@ type ObservedState struct {
 	PodmanNetworks   []NetworkObservedState         `json:"podman_networks,omitempty"`
 	LinkNetworks     []LinkNetworkObservedState     `json:"link_networks,omitempty"`
 	ManagedArtifacts []ManagedArtifactObservedState `json:"managed_artifacts,omitempty"`
-}
-
-type CoreSourceRole string
-
-const (
-	CoreSourceEmbedded CoreSourceRole = "embedded"
-	CoreSourceLocal    CoreSourceRole = "local"
-	CoreSourceTarget   CoreSourceRole = "target"
-)
-
-type CoreSource struct {
-	ID           CoreSourceID   `json:"id"`
-	Role         CoreSourceRole `json:"role"`
-	TargetID     TargetID       `json:"target_id,omitempty"`
-	Version      string         `json:"version"`
-	SHA256       string         `json:"sha256"`
-	BaseSourceID CoreSourceID   `json:"base_source_id,omitempty"`
-}
-
-type ModuleSourceRole string
-
-const (
-	ModuleSourceRemote ModuleSourceRole = "remote"
-	ModuleSourceLocal  ModuleSourceRole = "local"
-	ModuleSourceTarget ModuleSourceRole = "target"
-)
-
-type ModuleSource struct {
-	PackageID     ModulePackageID  `json:"package_id"`
-	Role          ModuleSourceRole `json:"role"`
-	TargetID      TargetID         `json:"target_id,omitempty"`
-	Owner         string           `json:"owner,omitempty"`
-	Repository    string           `json:"repository,omitempty"`
-	Ref           string           `json:"ref,omitempty"`
-	Commit        string           `json:"commit,omitempty"`
-	BaseCommit    string           `json:"base_commit,omitempty"`
-	Version       string           `json:"version"`
-	PackageSHA256 string           `json:"package_sha256"`
 }
 
 type SecretMetadata struct {
@@ -265,8 +231,7 @@ type BackupArtifactMetadata struct {
 type Snapshot struct {
 	SchemaVersion    int                       `json:"schema_version"`
 	Targets          []Target                  `json:"targets"`
-	CoreSources      []CoreSource              `json:"core_sources"`
-	ModuleSources    []ModuleSource            `json:"module_sources"`
+	Sources          SourceState               `json:"sources"`
 	Secrets          []SecretMetadata          `json:"secrets"`
 	ExecutionBundles []ExecutionBundleMetadata `json:"execution_bundles"`
 	ExecutionRecords []ExecutionRecordMetadata `json:"execution_records"`
@@ -277,11 +242,11 @@ func (s *Snapshot) normalize() {
 	if s.Targets == nil {
 		s.Targets = []Target{}
 	}
-	if s.CoreSources == nil {
-		s.CoreSources = []CoreSource{}
+	if s.Sources.Artifacts == nil {
+		s.Sources.Artifacts = []SourceArtifact{}
 	}
-	if s.ModuleSources == nil {
-		s.ModuleSources = []ModuleSource{}
+	if s.Sources.Workspaces == nil {
+		s.Sources.Workspaces = []SourceWorkspace{}
 	}
 	if s.Secrets == nil {
 		s.Secrets = []SecretMetadata{}
@@ -302,13 +267,8 @@ func (s *Snapshot) normalize() {
 		NormalizeObservedState(&s.Targets[i].Observed)
 	}
 	sort.Slice(s.Targets, func(i, j int) bool { return s.Targets[i].ID < s.Targets[j].ID })
-	sort.Slice(s.CoreSources, func(i, j int) bool { return s.CoreSources[i].ID < s.CoreSources[j].ID })
-	sort.Slice(s.ModuleSources, func(i, j int) bool {
-		if s.ModuleSources[i].PackageID == s.ModuleSources[j].PackageID {
-			return s.ModuleSources[i].Role < s.ModuleSources[j].Role
-		}
-		return s.ModuleSources[i].PackageID < s.ModuleSources[j].PackageID
-	})
+	sort.Slice(s.Sources.Artifacts, func(i, j int) bool { return s.Sources.Artifacts[i].ID < s.Sources.Artifacts[j].ID })
+	sort.Slice(s.Sources.Workspaces, func(i, j int) bool { return s.Sources.Workspaces[i].ID < s.Sources.Workspaces[j].ID })
 	sort.Slice(s.Secrets, func(i, j int) bool { return s.Secrets[i].ID < s.Secrets[j].ID })
 	sort.Slice(s.ExecutionBundles, func(i, j int) bool { return s.ExecutionBundles[i].ID < s.ExecutionBundles[j].ID })
 	sort.Slice(s.ExecutionRecords, func(i, j int) bool { return s.ExecutionRecords[i].ID < s.ExecutionRecords[j].ID })
@@ -344,7 +304,6 @@ func validBackupType(value BackupArtifactType) bool {
 }
 
 func nowUTC() string { return time.Now().UTC().Format(time.RFC3339Nano) }
-
 func marshalDomain(value any) ([]byte, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
