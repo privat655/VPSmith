@@ -37,7 +37,7 @@ set -- run -d \
   --read-only \
   --cap-drop=ALL \
   --security-opt=no-new-privileges \
-  --tmpfs /run/vpsmith:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=0700
+  --tmpfs /run/vpsmith:rw,noexec,nosuid,nodev,size=16m,mode=1777
 if [ "$engine" = "podman" ]; then
   set -- "$@" --read-only-tmpfs=false
 fi
@@ -90,8 +90,11 @@ done
     rm -f "$probe"
   done
   test -d /run/vpsmith
-  test "$(stat -c %u:%g /run/vpsmith)" = "10001:10001"
-  probe=/run/vpsmith/.write-check-$$
+  test "$(stat -c %a /run/vpsmith)" = "1777"
+  test -d /run/vpsmith/ssh
+  test "$(stat -c %u:%g /run/vpsmith/ssh)" = "10001:10001"
+  test "$(stat -c %a /run/vpsmith/ssh)" = "700"
+  probe=/run/vpsmith/ssh/.write-check-$$
   : > "$probe"
   rm -f "$probe"
   test ! -e /var/lib/vpsmith/state/ssh-runtime
@@ -132,7 +135,7 @@ fi
 
 embedded_json=$("$engine" run --rm --entrypoint /usr/local/bin/vpsmith-studio "$image" version)
 printf '%s\n' "$embedded_json" | grep -F '"sha256"' >/dev/null || {
-  printf 'ERROR: embedded source identities are unavailable in runtime image\n' >&2
+  printf 'ERROR: embedded source identities are unavailable in runtime image\n' "$embedded_json" >&2
   exit 1
 }
 

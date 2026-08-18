@@ -14,6 +14,8 @@
                         script,
                         args.admin_user,
                         secrets,
+                        Path(args.secret_fifo).parent,
+                        args.run_id,
                         manifest.get("subject_kind") == "module",
                         [str(p) for p in manifest.get("action_writable_paths", [])],
                         bool(step.get("mutating")),
