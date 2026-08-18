@@ -15,6 +15,8 @@
                         args.admin_user,
                         secrets,
                         manifest.get("subject_kind") == "module",
+                        [str(p) for p in manifest.get("action_writable_paths", [])],
+                        bool(step.get("mutating")),
                     )
                 else:
                     raise RuntimeError("unsupported execution step")
