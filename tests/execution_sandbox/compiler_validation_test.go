@@ -149,6 +149,33 @@ func TestCompilerGeneratedValidationUsesProductionExecutionPathAndCannotMutateHo
 			t.Fatalf("validation escaped read-only action sandbox: %s", path)
 		}
 	}
+
+	const owned = "/var/tmp/vpsmith-module-owned"
+	run(t, "docker", "exec", cid, "install", "-d", "-m", "0755", "-o", "dev", "-g", "dev", owned)
+	mutation := assemble(t, assembler, executionbundle.Input{
+		Kind:                executionbundle.Migration,
+		TargetID:            string(sandboxTargetID),
+		SubjectKind:         "module",
+		SubjectID:           instance,
+		SubjectIdentity:     "validation-1.0.0",
+		Version:             "1.0.0",
+		Actions:             []executionbundle.File{{Path: "actions/mutate.sh", Mode: 0o555, Data: []byte("#!/bin/sh\nset -eu\nprintf owned > " + owned + "/changed\nif printf escaped > /etc/vpsmith-module-escape; then exit 73; fi\n")}},
+		ActionIDs:           []string{"mutate"},
+		ActionWritablePaths: []string{owned},
+		Preconditions:       []executionbundle.Precondition{{Kind: "target", Subject: string(sandboxTargetID), Expected: "same-target"}},
+		ExpectedPost:        map[string]any{"artifacts": map[string]string{}},
+		Steps:               []executionbundle.Step{{ID: "action:mutate", Kind: "action", Action: "mutate", Mutating: true}},
+	})
+	result, err := executor(t, target, history, "run_module_mutation").Execute(ctx, string(sandboxTargetID), mutation)
+	if err != nil || result.Status != execution.StatusSuccess {
+		t.Fatalf("scoped module mutation status=%s err=%v", result.Status, err)
+	}
+	if got := dockerRead(t, cid, owned+"/changed"); got != "owned" {
+		t.Fatalf("module-owned mutation = %q", got)
+	}
+	if dockerExists(t, cid, "/etc/vpsmith-module-escape") {
+		t.Fatal("mutating module action escaped declared persistent storage")
+	}
 }
 
 func validationModulePackage() fstest.MapFS {
