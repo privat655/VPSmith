@@ -69,13 +69,16 @@ def redact(data: bytes, secrets: dict[str, bytes]) -> str:
     return out.decode("utf-8", "replace")
 
 
-def run_action(script: Path, admin_user: str, secrets: dict[str, bytes]) -> tuple[int, str, str]:
-    # Registered module actions are intentionally shell scripts, but they are
-    # not a privilege boundary. Run each action in a transient systemd sandbox
-    # so the Cloud-init administrator's host-wide sudo permission is never
-    # inherited by module code. The action can read host state and use normal
-    # unprivileged interfaces, but cannot elevate privileges or write the host
-    # filesystem/Core configuration directly.
+def run_action(script: Path, admin_user: str, secrets: dict[str, bytes], restrict_host: bool) -> tuple[int, str, str]:
+    if not restrict_host:
+        cp = subprocess.run(["runuser", "-u", admin_user, "--", str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        return cp.returncode, redact(cp.stdout, secrets), redact(cp.stderr, secrets)
+
+    # module.yaml actions are intentionally shell scripts, but module code must
+    # not inherit the Cloud-init administrator's host-wide sudo authority.
+    # systemd creates the mount/capability sandbox before dropping to the
+    # administrator UID, so the action can inspect host state and use ordinary
+    # unprivileged interfaces without being able to patch Core or the host.
     command = [
         "systemd-run",
         "--quiet",
