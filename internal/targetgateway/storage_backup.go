@@ -100,6 +100,7 @@ func (t *sshTransport) PrepareStorageCopy(ctx context.Context, sess session, dec
 		args.WriteString(shellQuote(strings.TrimPrefix(item, "/")))
 	}
 	command := "set -eu; " +
+		"if ! command -v tar >/dev/null 2>&1 || ! command -v zstd >/dev/null 2>&1; then printf 'prerequisite\\n'; exit 0; fi; " +
 		"root=" + shellQuote(storageCopyRoot) + "; " +
 		"sudo -n install -d -m 0700 -o root -g root \"$root\"; " +
 		"token=copy-$(date +%s)-$$; file=\"$root/$token.tar.zst\"; " +
@@ -112,6 +113,9 @@ func (t *sshTransport) PrepareStorageCopy(ctx context.Context, sess session, dec
 		return "", "", 0, err
 	}
 	fields := strings.Fields(strings.TrimSpace(string(stdout)))
+	if len(fields) == 1 && fields[0] == "prerequisite" {
+		return "", "", 0, errors.New("target storage-copy requires GNU tar and zstd")
+	}
 	if len(fields) == 2 && fields[0] == "error" {
 		code, parseErr := strconv.Atoi(fields[1])
 		if parseErr != nil || code <= 0 {
