@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/privat655/VPSmith/internal/backuprestore"
 	"github.com/privat655/VPSmith/internal/bootstrap"
 	"github.com/privat655/VPSmith/internal/deployment"
 	"github.com/privat655/VPSmith/internal/execution"
 	"github.com/privat655/VPSmith/internal/executionbundle"
 	"github.com/privat655/VPSmith/internal/executionstate"
 	"github.com/privat655/VPSmith/internal/managementstate"
+	"github.com/privat655/VPSmith/internal/recoverypackage"
 	"github.com/privat655/VPSmith/internal/registry"
 	"github.com/privat655/VPSmith/internal/sourcelibrary"
 	"github.com/privat655/VPSmith/internal/targetgateway"
@@ -31,9 +33,8 @@ type Paths struct {
 	BundlesDir    string
 }
 
-// Application is the single production composition root for the Step 1-7
-// VPSmith domain modules. Adapters such as the local Studio HTTP server and the
-// Step-7 live verifier call this module instead of rebuilding their own graph.
+// Application is the single production composition root for VPSmith domain
+// modules. Adapters call this module instead of rebuilding their own graph.
 type Application struct {
 	state     *managementstate.Store
 	sources   *sourcelibrary.Library
@@ -41,6 +42,9 @@ type Application struct {
 	compiler  *deployment.Compiler
 	bootstrap *bootstrap.Coordinator
 	executor  *execution.Executor
+	bundles   *executionbundle.Assembler
+	backups   *backuprestore.Manager
+	recovery  *recoverypackage.Service
 }
 
 func Open(ctx context.Context, paths Paths) (*Application, error) {
@@ -100,7 +104,16 @@ func Open(ctx context.Context, paths Paths) (*Application, error) {
 	if err != nil {
 		return fail(fmt.Errorf("open execution module: %w", err))
 	}
-	return &Application{state: state, sources: sources, gateway: gateway, compiler: compiler, bootstrap: bootstrapCoordinator, executor: executor}, nil
+	backupScratch := filepath.Join(filepath.Dir(paths.SSHRuntimeDir), "backup")
+	backups, err := backuprestore.New(paths.BackupsDir, backupScratch, state)
+	if err != nil {
+		return fail(fmt.Errorf("open backup/restore module: %w", err))
+	}
+	recovery, err := recoverypackage.New(state, sources, bundles, backups)
+	if err != nil {
+		return fail(fmt.Errorf("open recovery-package consumer: %w", err))
+	}
+	return &Application{state: state, sources: sources, gateway: gateway, compiler: compiler, bootstrap: bootstrapCoordinator, executor: executor, bundles: bundles, backups: backups, recovery: recovery}, nil
 }
 
 func normalizePaths(paths *Paths) error {
@@ -152,7 +165,29 @@ func (a *Application) Execute(ctx context.Context, targetID string, bundle execu
 	return a.executor.Execute(ctx, targetID, bundle)
 }
 
-func (a *Application) State() *managementstate.Store   { return a.state }
-func (a *Application) Sources() *sourcelibrary.Library { return a.sources }
-func (a *Application) Gateway() *targetgateway.Gateway { return a.gateway }
-func (a *Application) Compiler() *deployment.Compiler  { return a.compiler }
+// CreateRecoveryPackage is the production recovery-export operation. It uses
+// the same canonical modules already composed for Studio; no filesystem/DB
+// exporter exists beside this path.
+func (a *Application) CreateRecoveryPackage(ctx context.Context, req recoverypackage.CreateRequest) (backuprestore.Artifact, error) {
+	return a.recovery.Create(ctx, req)
+}
+
+// ImportRecoveryPackage validates/decrypts a real .tar.zst.age package and
+// atomically restores canonical management state through the same modules.
+func (a *Application) ImportRecoveryPackage(ctx context.Context, source string, passphrase []byte) (backuprestore.Artifact, error) {
+	return a.recovery.Import(ctx, source, passphrase)
+}
+
+// InspectTargetAfterRecovery proves the restored SSH identity and strict host
+// trust are consumable by the existing read-only target gateway. It performs no
+// target mutation and never re-enters TOFU.
+func (a *Application) InspectTargetAfterRecovery(ctx context.Context, id managementstate.TargetID) (managementstate.ObservedState, error) {
+	return a.gateway.Inspect(ctx, id)
+}
+
+func (a *Application) State() *managementstate.Store      { return a.state }
+func (a *Application) Sources() *sourcelibrary.Library    { return a.sources }
+func (a *Application) Gateway() *targetgateway.Gateway    { return a.gateway }
+func (a *Application) Compiler() *deployment.Compiler     { return a.compiler }
+func (a *Application) Backups() *backuprestore.Manager    { return a.backups }
+func (a *Application) Recovery() *recoverypackage.Service { return a.recovery }
