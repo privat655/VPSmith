@@ -20,6 +20,19 @@ func validateInput(in Input) error {
 	if len(in.ActionIDs) != len(in.Actions) {
 		return errors.New("action IDs and action files must have equal length")
 	}
+	if len(in.ActionWritablePaths) > 0 && in.SubjectKind != "module" {
+		return errors.New("action writable paths are only valid for module bundles")
+	}
+	seenWritable := map[string]struct{}{}
+	for _, value := range in.ActionWritablePaths {
+		if value == "" || !strings.HasPrefix(value, "/") || path.Clean(value) != value || strings.ContainsAny(value, "\r\n\x00\t ") {
+			return fmt.Errorf("invalid action writable path %q", value)
+		}
+		if _, exists := seenWritable[value]; exists {
+			return fmt.Errorf("duplicate action writable path %s", value)
+		}
+		seenWritable[value] = struct{}{}
+	}
 	if in.PackageSHA256 != "" && !validSHA256(in.PackageSHA256) {
 		return errors.New("bundle package sha256 is invalid")
 	}
@@ -103,6 +116,9 @@ func normalizeManifest(m *Manifest) {
 	if m.Actions == nil {
 		m.Actions = []Action{}
 	}
+	if m.ActionWritablePaths == nil {
+		m.ActionWritablePaths = []string{}
+	}
 	if m.Secrets == nil {
 		m.Secrets = []SecretReference{}
 	}
@@ -124,6 +140,7 @@ func normalizeManifest(m *Manifest) {
 	})
 	sort.Slice(m.Images, func(i, j int) bool { return m.Images[i].Name < m.Images[j].Name })
 	sort.Slice(m.Artifacts, func(i, j int) bool { return m.Artifacts[i].Path < m.Artifacts[j].Path })
+	sort.Strings(m.ActionWritablePaths)
 	sort.Slice(m.Secrets, func(i, j int) bool {
 		a, b := m.Secrets[i], m.Secrets[j]
 		if a.SecretID != b.SecretID {

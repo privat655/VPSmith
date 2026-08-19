@@ -96,10 +96,12 @@ type ManagedArtifactObservedState struct {
 }
 
 type ExecutionProofObservedState struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind,omitempty"`
-	Outcome string `json:"outcome,omitempty"`
-	SHA256  string `json:"sha256,omitempty"`
+	ID           string `json:"id"`
+	BundleID     string `json:"bundle_id"`
+	BundleSHA256 string `json:"bundle_sha256"`
+	Kind         string `json:"kind,omitempty"`
+	Outcome      string `json:"outcome,omitempty"`
+	SHA256       string `json:"sha256,omitempty"`
 }
 
 type LinkNetworkObservedState struct {

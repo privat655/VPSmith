@@ -10,14 +10,23 @@
                     script = action_dir / (str(step.get("action")) + ".sh")
                     atomic_write(script, data, 0o500)
                     os.chown(script, uid, gid)
-                    code, out, err = run_action(script, args.admin_user, secrets)
+                    code, out, err = run_action(
+                        script,
+                        args.admin_user,
+                        secrets,
+                        Path(args.secret_fifo).parent,
+                        args.run_id,
+                        manifest.get("subject_kind") == "module",
+                        [str(p) for p in manifest.get("action_writable_paths", [])],
+                        bool(step.get("mutating")),
+                    )
                 else:
                     raise RuntimeError("unsupported execution step")
                 result.update(exit_code=code, stdout=out, stderr=err, finished_at=now())
                 proof["steps"].append(result)
                 write_proof(proof_file, proof)
                 if code != 0:
-                    raise RuntimeError(f"step {step.get('id')} exited with {code}")
+                    raise RuntimeError(f"step {step.get('id')} exited with {code}: {err}")
             except Exception as exc:
                 if not result.get("finished_at"):
                     result.update(exit_code=1, stdout="", stderr="", finished_at=now())

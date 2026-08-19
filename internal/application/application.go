@@ -107,9 +107,6 @@ func normalizePaths(paths *Paths) error {
 	if paths == nil {
 		return errors.New("application paths are required")
 	}
-	if paths.SSHRuntimeDir == "" && paths.StateDir != "" {
-		paths.SSHRuntimeDir = filepath.Join(paths.StateDir, "ssh-runtime")
-	}
 	if paths.BundlesDir == "" && paths.StateDir != "" {
 		paths.BundlesDir = filepath.Join(paths.StateDir, "execution-bundles")
 	}

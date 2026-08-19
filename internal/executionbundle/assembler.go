@@ -50,7 +50,7 @@ func (a *Assembler) Assemble(in Input) (Bundle, error) {
 		FormatVersion: 2, Runner: RunnerIdentity{Version: targetrunner.Version, Path: targetrunner.Path, SHA256: runnerSum}, Kind: in.Kind, TargetID: in.TargetID, SubjectKind: in.SubjectKind, SubjectID: in.SubjectID,
 		SubjectIdentity: in.SubjectIdentity, PackageID: in.PackageID, PackageSHA256: in.PackageSHA256, Version: in.Version,
 		Sources: append([]SourceIdentity(nil), in.Sources...), Images: append([]ImageIdentity(nil), in.Images...), Artifacts: artifacts,
-		Actions: actions, Secrets: append([]SecretReference(nil), in.Secrets...), Preconditions: append([]Precondition(nil), in.Preconditions...),
+		Actions: actions, ActionWritablePaths: append([]string(nil), in.ActionWritablePaths...), Secrets: append([]SecretReference(nil), in.Secrets...), Preconditions: append([]Precondition(nil), in.Preconditions...),
 		ExpectedPost: post, Validations: append([]ValidationSpec(nil), in.Validations...), Steps: append([]Step(nil), in.Steps...), BackupRequired: in.BackupRequired,
 	}
 	normalizeManifest(&m)

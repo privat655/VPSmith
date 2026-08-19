@@ -72,7 +72,8 @@ func (c *Compiler) Prepare(ctx context.Context, req Request) (PreparedOperation,
 		Kind: bundleKind(req.Operation), TargetID: req.TargetID, SubjectKind: "module", SubjectID: req.SubjectInstance,
 		SubjectIdentity: subjectIdentity, PackageID: packageID, PackageSHA256: packageSHA,
 		Version: subjectVersion(req, mods, detachedSubject), Sources: sources, Images: imageIDs, Files: bundleFiles,
-		Actions: actionFiles, ActionIDs: actionIDs, Secrets: bundleSecrets(mods), Preconditions: pre,
+		Actions: actionFiles, ActionIDs: actionIDs, ActionWritablePaths: actionWritablePaths(req, mods, detachedSubject),
+		Secrets: bundleSecrets(mods), Preconditions: pre,
 		ExpectedPost: post, Validations: validations, Steps: steps, BackupRequired: req.BackupRequired,
 	})
 	if err != nil {

@@ -21,12 +21,17 @@ for volume in vpsmith-state vpsmith-sources vpsmith-backups; do
   "$engine" volume inspect "$volume" >/dev/null 2>&1 || "$engine" volume create "$volume" >/dev/null
 done
 
+# /run/vpsmith is only an ephemeral rendezvous directory. VPSmith creates the
+# actual SSH credential workspace below it as UID 10001 with mode 0700. Keeping
+# uid/gid out of the tmpfs option set makes this contract portable across the
+# Docker and Podman Linux launchers while preserving noexec/nosuid/nodev.
 set -- run --rm \
   --name vpsmith-platform \
   --network host \
   --read-only \
   --cap-drop=ALL \
-  --security-opt=no-new-privileges
+  --security-opt=no-new-privileges \
+  --tmpfs /run/vpsmith:rw,noexec,nosuid,nodev,size=16m,mode=1777
 if [ "$engine" = "podman" ]; then
   set -- "$@" --read-only-tmpfs=false
 fi

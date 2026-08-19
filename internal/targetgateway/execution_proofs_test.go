@@ -43,7 +43,7 @@ func TestProductionInspectionImportsCanonicalTargetExecutionProofs(t *testing.T)
 		t.Fatalf("execution proofs = %#v", observed.Core.ExecutionProofs)
 	}
 	proof := observed.Core.ExecutionProofs[0]
-	if proof.ID != "run-canonical" || proof.Kind != "migration" || proof.Outcome != "success" || proof.SHA256 != proofSHA256 {
+	if proof.ID != "run-canonical" || proof.BundleID != "bundle-canonical" || proof.BundleSHA256 != strings.Repeat("a", 64) || proof.Kind != "migration" || proof.Outcome != "success" || proof.SHA256 != proofSHA256 {
 		t.Fatalf("execution proof = %#v", proof)
 	}
 }

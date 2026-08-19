@@ -69,9 +69,141 @@ def redact(data: bytes, secrets: dict[str, bytes]) -> str:
     return out.decode("utf-8", "replace")
 
 
-def run_action(script: Path, admin_user: str, secrets: dict[str, bytes]) -> tuple[int, str, str]:
-    cp = subprocess.run(["runuser", "-u", admin_user, "--", str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    return cp.returncode, redact(cp.stdout, secrets), redact(cp.stderr, secrets)
+def systemd_unit_state(unit: str) -> dict[str, str]:
+    cp = subprocess.run(
+        [
+            "systemctl",
+            "show",
+            "--no-pager",
+            "--property=ActiveState",
+            "--property=SubState",
+            "--property=ExecMainStatus",
+            "--property=Result",
+            unit,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if cp.returncode != 0:
+        detail = cp.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError("cannot inspect module action sandbox" + (f": {detail}" if detail else ""))
+    state: dict[str, str] = {}
+    for line in cp.stdout.decode("utf-8", "replace").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            state[key] = value
+    return state
+
+
+def read_if_exists(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return b""
+
+
+def run_action(
+    script: Path,
+    admin_user: str,
+    secrets: dict[str, bytes],
+    runtime_dir: Path,
+    run_id: str,
+    restrict_host: bool,
+    writable_paths: list[str],
+    mutating: bool,
+) -> tuple[int, str, str]:
+    if not restrict_host:
+        cp = subprocess.run(["runuser", "-u", admin_user, "--", str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        return cp.returncode, redact(cp.stdout, secrets), redact(cp.stderr, secrets)
+
+    # module.yaml actions are intentionally shell scripts, but module code must
+    # not inherit the Cloud-init administrator's host-wide sudo authority.
+    # The writable scope comes from module persistent_storage, never from an
+    # individual action. Validation receives no writable exception at all.
+    #
+    # Do not use systemd-run --wait/--pipe here. Those modes require systemd's
+    # full bus connection, which is intentionally unavailable in the minimal
+    # target runner service. Start the transient action service through the
+    # manager connection, then observe it through systemctl. Output is captured
+    # below /run, redacted by this runner, and removed immediately afterwards so
+    # action output containing secrets never has to pass through journald.
+    io_dir = runtime_dir / "action-io"
+    io_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(io_dir, 0o700)
+    token = f"{os.getpid()}-{time.monotonic_ns()}"
+    unit = f"vpsmith-action-{token}.service"
+    stdout_path = io_dir / (token + ".stdout")
+    stderr_path = io_dir / (token + ".stderr")
+    for path in (stdout_path, stderr_path):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+
+    parent_unit = f"vpsmith-exec-{run_id}.service"
+    command = [
+        "systemd-run",
+        "--system",
+        "--quiet",
+        f"--unit={unit}",
+        f"--uid={admin_user}",
+        "--property=Type=exec",
+        "--property=RemainAfterExit=yes",
+        "--property=UMask=0077",
+        "--property=StandardInput=null",
+        f"--property=StandardOutput=file:{stdout_path}",
+        f"--property=StandardError=file:{stderr_path}",
+        f"--property=BindsTo={parent_unit}",
+        f"--property=After={parent_unit}",
+        "--property=NoNewPrivileges=yes",
+        "--property=CapabilityBoundingSet=",
+        "--property=AmbientCapabilities=",
+        "--property=ProtectSystem=strict",
+        "--property=ProtectHome=read-only",
+        "--property=PrivateDevices=yes",
+        "--property=ProtectKernelTunables=yes",
+        "--property=ProtectKernelModules=yes",
+        "--property=ProtectKernelLogs=yes",
+        "--property=ProtectControlGroups=yes",
+        "--property=RestrictSUIDSGID=yes",
+        "--property=LockPersonality=yes",
+    ]
+    if mutating and writable_paths:
+        command.append("--property=ReadWritePaths=" + " ".join(writable_paths))
+    command.append(str(script))
+
+    try:
+        cp = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if cp.returncode != 0:
+            return cp.returncode, redact(cp.stdout, secrets), redact(cp.stderr, secrets)
+
+        state: dict[str, str]
+        while True:
+            state = systemd_unit_state(unit)
+            active = state.get("ActiveState", "")
+            sub = state.get("SubState", "")
+            if active in ("failed", "inactive") or sub in ("exited", "failed", "dead"):
+                break
+            time.sleep(0.05)
+
+        try:
+            code = int(state.get("ExecMainStatus", "1"))
+        except ValueError:
+            code = 1
+        if state.get("Result") != "success" and code == 0:
+            code = 1
+        return code, redact(read_if_exists(stdout_path), secrets), redact(read_if_exists(stderr_path), secrets)
+    finally:
+        subprocess.run(["systemctl", "stop", "--quiet", unit], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(["systemctl", "reset-failed", "--quiet", unit], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        for path in (stdout_path, stderr_path):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        try:
+            io_dir.rmdir()
+        except OSError:
+            pass
 
 
 def artifact_by_path(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
