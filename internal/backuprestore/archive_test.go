@@ -123,6 +123,29 @@ func TestExtractTarZstAcceptsGNUStandardXattrPAX(t *testing.T) {
 	}
 }
 
+func TestInspectAndExtractAcceptGNUDirectoryTrailingSlash(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "gnu-directory.tar.zst")
+	writeRawTarZst(t, archive, tar.Header{Name: "dir/", Mode: 0o751, Typeflag: tar.TypeDir})
+	entries, err := InspectTarZst(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != "dir" || entries[0].Type != tar.TypeDir {
+		t.Fatalf("normalized entries=%#v", entries)
+	}
+	out := filepath.Join(t.TempDir(), "restore")
+	if err := ExtractTarZst(archive, out, ArchiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(out, "dir"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o751 {
+		t.Fatalf("directory mode=%o", info.Mode().Perm())
+	}
+}
+
 func TestArchivedXattrsRejectsConflictingRepresentations(t *testing.T) {
 	key := base64.RawURLEncoding.EncodeToString([]byte("user.vpsmith"))
 	header := &tar.Header{
