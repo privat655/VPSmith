@@ -217,6 +217,7 @@ func ExtractTarZst(filename, root string, options ArchiveOptions) error {
 	defer decoder.Close()
 	tr := tar.NewReader(decoder)
 	var directories []*tar.Header
+	var hardlinks []*tar.Header
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -269,22 +270,30 @@ func ExtractTarZst(filename, root string, options ArchiveOptions) error {
 				return err
 			}
 		case tar.TypeLink:
-			target := filepath.Join(root, filepath.FromSlash(header.Linkname))
-			if err := ensureNoSymlinkParent(root, target); err != nil {
-				return err
-			}
-			info, err := os.Lstat(target)
-			if err != nil || !info.Mode().IsRegular() {
-				return fmt.Errorf("hardlink target %q is not an extracted regular file", header.Linkname)
-			}
-			if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-				return err
-			}
-			if err := os.Link(target, destination); err != nil {
-				return err
-			}
+			copyHeader := *header
+			hardlinks = append(hardlinks, &copyHeader)
 		default:
 			return fmt.Errorf("unsupported archive entry type %d", header.Typeflag)
+		}
+	}
+	for _, header := range hardlinks {
+		destination := filepath.Join(root, filepath.FromSlash(header.Name))
+		target := filepath.Join(root, filepath.FromSlash(header.Linkname))
+		if err := ensureNoSymlinkParent(root, destination); err != nil {
+			return err
+		}
+		if err := ensureNoSymlinkParent(root, target); err != nil {
+			return err
+		}
+		info, err := os.Lstat(target)
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("hardlink target %q is not an extracted regular file", header.Linkname)
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			return err
+		}
+		if err := os.Link(target, destination); err != nil {
+			return err
 		}
 	}
 	for i := len(directories) - 1; i >= 0; i-- {
@@ -318,7 +327,7 @@ func validateArchiveHeader(header *tar.Header) error {
 		}
 		return nil
 	case tar.TypeLink:
-		if header.Linkname == "" || path.IsAbs(header.Linkname) || path.Clean(seader.Linkname) != header.Linkname || !filepath.IsLocal(filepath.FromSlash(header.Linkname)) {
+		if header.Linkname == "" || path.IsAbs(header.Linkname) || path.Clean(header.Linkname) != header.Linkname || !filepath.IsLocal(filepath.FromSlash(header.Linkname)) {
 			return fmt.Errorf("hardlink %q escapes archive root", header.Name)
 		}
 		return nil

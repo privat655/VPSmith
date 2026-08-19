@@ -23,6 +23,20 @@ type StorageCopy struct {
 	SHA256       string
 	Size         int64
 	DeclaredPath []string
+	workDir      string
+}
+
+// Close removes the verified local plaintext storage copy. Callers own a
+// successful StorageCopy only until they have consumed it into the encrypted
+// backup/restore primitive.
+func (s *StorageCopy) Close() error {
+	if s == nil || s.workDir == "" {
+		return nil
+	}
+	err := os.RemoveAll(s.workDir)
+	s.workDir = ""
+	s.ArchivePath = ""
+	return err
 }
 
 // CopyOfflineStorage orchestrates the common target-side storage-copy seam.
@@ -48,7 +62,7 @@ func (m *Manager) CopyOfflineStorage(ctx context.Context, target TargetStorage, 
 	if int64(len(data)) != expectedSize || actualSHA != expectedSHA {
 		return result, fmt.Errorf("verify storage copy %s failed; target temporary material remains", token)
 	}
-	work, err := os.MkdirTemp(m.root, ".storage-copy-*")
+	work, err := m.newWorkDir("storage-copy")
 	if err != nil {
 		return result, fmt.Errorf("prepare local storage copy %s; target temporary material remains: %w", token, err)
 	}
@@ -66,6 +80,7 @@ func (m *Manager) CopyOfflineStorage(ctx context.Context, target TargetStorage, 
 		return result, fmt.Errorf("local storage copy verified but target cleanup %s failed: %w", token, err)
 	}
 	result.ArchivePath = archive
+	result.workDir = work
 	result.Token = ""
 	return result, nil
 }

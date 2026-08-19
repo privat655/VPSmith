@@ -2,18 +2,12 @@ package backuprestore
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
-	"filippo.io/age"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/privat655/VPSmith/internal/managementstate"
@@ -97,25 +91,38 @@ func (p *PreparedRestore) Close() error {
 }
 
 type Manager struct {
-	root  string
-	state *managementstate.Store
-	now   func() time.Time
+	root    string
+	scratch string
+	state   *managementstate.Store
+	now     func() time.Time
 }
 
-func New(root string, state *managementstate.Store) (*Manager, error) {
+// New creates the backup catalogue and its volatile work area. scratch must be
+// a separate absolute path; production composes it below /run/vpsmith so
+// decrypted payloads and target storage copies never land in persistent backup
+// storage.
+func New(root, scratch string, state *managementstate.Store) (*Manager, error) {
 	if root == "" || !filepath.IsAbs(root) {
 		return nil, errors.New("absolute backup store path is required")
+	}
+	if scratch == "" || !filepath.IsAbs(scratch) {
+		return nil, errors.New("absolute backup scratch path is required")
+	}
+	if sameOrWithin(root, scratch) || sameOrWithin(scratch, root) {
+		return nil, errors.New("backup store and scratch paths must be separate")
 	}
 	if state == nil {
 		return nil, errors.New("management state is required")
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return nil, fmt.Errorf("create backup store: %w", err)
+	for label, path := range map[string]string{"backup store": root, "backup scratch": scratch} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return nil, fmt.Errorf("create %s: %w", label, err)
+		}
+		if err := os.Chmod(path, 0o700); err != nil {
+			return nil, fmt.Errorf("secure %s: %w", label, err)
+		}
 	}
-	if err := os.Chmod(root, 0o700); err != nil {
-		return nil, fmt.Errorf("secure backup store: %w", err)
-	}
-	return &Manager{root: root, state: state, now: time.Now}, nil
+	return &Manager{root: root, scratch: scratch, state: state, now: time.Now}, nil
 }
 
 func (m *Manager) Create(ctx context.Context, request CreateRequest) (Artifact, error) {
@@ -126,12 +133,12 @@ func (m *Manager) Create(ctx context.Context, request CreateRequest) (Artifact, 
 	if err != nil {
 		return Artifact{}, err
 	}
-	createdAt := m.now().UTC().Format(time.RFC3339Nano)
-	work, err := os.MkdirTemp(m.root, ".create-*")
+	work, err := m.newWorkDir("create")
 	if err != nil {
 		return Artifact{}, err
 	}
 	defer os.RemoveAll(work)
+
 	payloadRoot := filepath.Join(work, "payload")
 	if err := os.Mkdir(payloadRoot, 0o700); err != nil {
 		return Artifact{}, err
@@ -153,19 +160,27 @@ func (m *Manager) Create(ctx context.Context, request CreateRequest) (Artifact, 
 		return Artifact{}, err
 	}
 	manifest := Manifest{
-		FormatVersion: FormatVersion, ArtifactType: request.Type, ArtifactID: id,
-		CreatedAt: createdAt, TargetID: request.TargetID, ModuleInstanceID: request.ModuleInstanceID,
-		SourceRefs: sortedUnique(descriptor.SourceRefs), BundleRefs: sortedUnique(descriptor.BundleRefs),
-		RestoreRefs: sortedUnique(descriptor.RestoreRefs), PayloadInventory: inventory(entries),
+		FormatVersion:    FormatVersion,
+		ArtifactType:     request.Type,
+		ArtifactID:       id,
+		CreatedAt:        m.now().UTC().Format(time.RFC3339Nano),
+		TargetID:         request.TargetID,
+		ModuleInstanceID: request.ModuleInstanceID,
+		SourceRefs:       sortedUnique(descriptor.SourceRefs),
+		BundleRefs:       sortedUnique(descriptor.BundleRefs),
+		RestoreRefs:      sortedUnique(descriptor.RestoreRefs),
+		PayloadInventory: inventory(entries),
 	}
 	if request.Type == managementstate.BackupSystemRestorePoint {
-		return m.publishRestorePoint(ctx, work, payloadArchive, manifest)
+		return m.publishRestorePoint(ctx, payloadArchive, manifest)
 	}
 	return m.publishLongTerm(ctx, work, payloadArchive, manifest, request.Passphrase)
 }
 
 func (m *Manager) Inspect(ctx context.Context, filename string, expected managementstate.BackupArtifactType, passphrase []byte) (*Inspection, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if filename == "" || !filepath.IsAbs(filename) {
 		return nil, errors.New("absolute backup artifact path is required")
 	}
@@ -178,7 +193,7 @@ func (m *Manager) Inspect(ctx context.Context, filename string, expected managem
 	if len(passphrase) == 0 {
 		return nil, errors.New("recovery passphrase is required")
 	}
-	work, err := os.MkdirTemp(m.root, ".inspect-*")
+	work, err := m.newWorkDir("inspect")
 	if err != nil {
 		return nil, err
 	}
@@ -229,8 +244,7 @@ func (m *Manager) PrepareRestore(ctx context.Context, filename string, expected 
 }
 
 func (m *Manager) Export(ctx context.Context, id managementstate.BackupArtifactID, destination string) error {
-	_ = ctx
-	artifact, err := m.catalogEntry(context.Background(), id)
+	artifact, err := m.catalogEntry(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -240,6 +254,13 @@ func (m *Manager) Export(ctx context.Context, id managementstate.BackupArtifactI
 	}
 	if destination == "" || !filepath.IsAbs(destination) {
 		return errors.New("absolute export destination is required")
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("only portable long-term backup files can be exported with this operation")
 	}
 	return copyFileExclusive(source, destination, 0o600)
 }
@@ -292,19 +313,16 @@ func (m *Manager) publishLongTerm(ctx context.Context, work, payloadArchive stri
 	if err := CreateTarZst(envelopeRoot, outerTar); err != nil {
 		return Artifact{}, err
 	}
-	candidateName := fmt.Sprintf("%s-%s.tar.zst.age.candidate", manifest.ArtifactType, manifest.ArtifactID)
-	candidate := filepath.Join(work, candidateName)
+	candidate := filepath.Join(work, fmt.Sprintf("%s-%s.tar.zst.age.candidate", manifest.ArtifactType, manifest.ArtifactID))
 	if err := encryptAge(outerTar, candidate, passphrase); err != nil {
 		return Artifact{}, err
 	}
-	// Verify the exact ciphertext candidate before it becomes a cataloged
-artifact.
-	if _, err := m.inspectCandidate(candidate, manifest.ArtifactType, passphrase); err != nil {
+	if err := m.verifyLongTermCandidate(ctx, candidate, manifest.ArtifactType, passphrase); err != nil {
 		return Artifact{}, fmt.Errorf("verify encrypted backup candidate: %w", err)
 	}
 	name := fmt.Sprintf("%s-%s.tar.zst.age", manifest.ArtifactType, manifest.ArtifactID)
 	final := filepath.Join(m.root, name)
-	if err := os.Rename(candidate, final); err != nil {
+	if err := publishFileExclusive(candidate, final, 0o600); err != nil {
 		return Artifact{}, fmt.Errorf("publish encrypted backup: %w", err)
 	}
 	sha, err := fileSHA256(final)
@@ -313,8 +331,13 @@ artifact.
 		return Artifact{}, err
 	}
 	metadata := managementstate.BackupArtifactMetadata{
-		ID: manifest.ArtifactID, Type: manifest.ArtifactType, TargetID: manifest.TargetID, ModuleInstanceID: manifest.ModuleInstanceID,
-		CreatedAt: manifest.CreatedAt, LocationRef: name, SHA256: sha,
+		ID:               manifest.ArtifactID,
+		Type:             manifest.ArtifactType,
+		TargetID:         manifest.TargetID,
+		ModuleInstanceID: manifest.ModuleInstanceID,
+		CreatedAt:        manifest.CreatedAt,
+		LocationRef:      name,
+		SHA256:           sha,
 	}
 	if err := m.state.Change(ctx, func(change *managementstate.Change) error {
 		return change.RegisterBackup(metadata)
@@ -325,48 +348,78 @@ artifact.
 	return Artifact{Metadata: metadata, Manifest: manifest, Path: final}, nil
 }
 
-func (m *Manager) publishRestorePoint(ctx context.Context, work, payloadArchive string, manifest Manifest) (Artifact, error) {
+func (m *Manager) publishRestorePoint(ctx context.Context, payloadArchive string, manifest Manifest) (Artifact, error) {
+	name := fmt.Sprintf("%s-%s", manifest.ArtifactType, manifest.ArtifactID)
+	final := filepath.Join(m.root, name)
+	candidate, err := os.MkdirTemp(m.scratch, ".restore-point-*")
+	if err != nil {
+		return Artifact{}, err
+	}
+	defer os.RemoveAll(candidate)
+
 	manifestBytes, err := yaml.Marshal(manifest)
 	if err != nil {
 		return Artifact{}, err
 	}
-	name := fmt.Sprintf("%s-%s", manifest.ArtifactType, manifest.ArtifactID)
-	final := filepath.Join(m.root, name)
-	if err := os.Mkdir(final, 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(candidate, "manifest.yaml"), manifestBytes, 0o600); err != nil {
 		return Artifact{}, err
 	}
-	ok := false
-	defer func() {
-		if !ok {
-			_ = os.RemoveAll(final)
-		}
-	}()
-	if err := os.WriteFile(filepath.Join(final, "manifest.yaml"), manifestBytes, 0o600); err != nil {
+	if err := copyFileExclusive(payloadArchive, filepath.Join(candidate, "storage.tar.zst"), 0o600); err != nil {
 		return Artifact{}, err
 	}
-	if err := copyFileExclusive(payloadArchive, filepath.Join(final, "storage.tar.zst"), 0o600); err != nil {
-		return Artifact{}, err
-	}
-	sums, err := checksumDocument(final, []string{"manifest.yaml", "storage.tar.zst"})
+	sums, err := checksumDocument(candidate, []string{"manifest.yaml", "storage.tar.zst"})
 	if err != nil {
 		return Artifact{}, err
 	}
-	if err := os.WriteFile(filepath.Join(final, "SHA256SUMS"), sums, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(candidate, "SHA256SUMS"), sums, 0o600); err != nil {
 		return Artifact{}, err
 	}
-	if _, err := inspectRestorePoint(final, manifest.ArtifactType); err != nil {
+	inspection, err := inspectRestorePoint(candidate, manifest.ArtifactType)
+	if err != nil {
 		return Artifact{}, fmt.Errorf("verify system restore point candidate: %w", err)
 	}
-	sha, err := treeEnvelopeSHA(final, []string{"manifest.yaml", "storage.tar.zst", "SHA256SUMS"})
+	_ = inspection.Close()
+	sha, err := treeEnvelopeSHA(candidate, []string{"manifest.yaml", "storage.tar.zst", "SHA256SUMS"})
 	if err != nil {
 		return Artifact{}, err
 	}
-	metadata := managementstate.BackupArtifactMetadata{ID: manifest.ArtifactID, Type: manifest.ArtifactType, TargetID: manifest.TargetID, ModuleInstanceID: manifest.ModuleInstanceID, CreatedAt: manifest.CreatedAt, LocationRef: name, SHA256: sha}
+	if err := publishDirectoryExclusive(candidate, final); err != nil {
+		return Artifact{}, fmt.Errorf("publish system restore point: %w", err)
+	}
+	metadata := managementstate.BackupArtifactMetadata{
+		ID:               manifest.ArtifactID,
+		Type:             manifest.ArtifactType,
+		TargetID:         manifest.TargetID,
+		ModuleInstanceID: manifest.ModuleInstanceID,
+		CreatedAt:        manifest.CreatedAt,
+		LocationRef:      name,
+		SHA256:           sha,
+	}
 	if err := m.state.Change(ctx, func(change *managementstate.Change) error {
 		return change.RegisterBackup(metadata)
 	}); err != nil {
+		_ = os.RemoveAll(final)
 		return Artifact{}, err
 	}
-	ok = true
 	return Artifact{Metadata: metadata, Manifest: manifest, Path: final}, nil
+}
+
+func (m *Manager) verifyLongTermCandidate(ctx context.Context, candidate string, expected managementstate.BackupArtifactType, passphrase []byte) error {
+	inspection, err := m.Inspect(ctx, candidate, expected, passphrase)
+	if err != nil {
+		return err
+	}
+	return inspection.Close()
+}
+
+func (m *Manager) newWorkDir(kind string) (string, error) {
+	work, err := os.MkdirTemp(m.scratch, "."+kind+"-*")
+	if err != nil {
+		return "", fmt.Errorf("create volatile backup work directory: %w", err)
+	}
+	if err := os.Chmod(work, 0o700); err != nil {
+		_ = os.RemoveAll(work)
+		return "", fmt.Errorf("secure volatile backup work directory: %w", err)
+	}
+	return work, nil
 }

@@ -104,7 +104,8 @@ func Open(ctx context.Context, paths Paths) (*Application, error) {
 	if err != nil {
 		return fail(fmt.Errorf("open execution module: %w", err))
 	}
-	backups, err := backuprestore.New(paths.BackupsDir, state)
+	backupScratch := filepath.Join(filepath.Dir(paths.SSHRuntimeDir), "backup")
+	backups, err := backuprestore.New(paths.BackupsDir, backupScratch, state)
 	if err != nil {
 		return fail(fmt.Errorf("open backup/restore module: %w", err))
 	}
