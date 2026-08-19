@@ -314,6 +314,12 @@ func validateArchiveHeader(header *tar.Header) error {
 	if header == nil || header.Name == "" || strings.ContainsRune(header.Name, '\x00') || strings.Contains(header.Name, "\\") {
 		return errors.New("archive contains invalid path")
 	}
+	if header.Typeflag == tar.TypeDir {
+		header.Name = strings.TrimRight(header.Name, "/")
+		if header.Name == "" {
+			return errors.New("archive contains invalid directory path")
+		}
+	}
 	clean := path.Clean(header.Name)
 	if clean != header.Name || clean == "." || !filepath.IsLocal(filepath.FromSlash(clean)) || path.IsAbs(clean) {
 		return fmt.Errorf("archive path %q is not local", header.Name)
