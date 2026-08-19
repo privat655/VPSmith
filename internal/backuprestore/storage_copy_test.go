@@ -30,7 +30,7 @@ func (s *storageFixture) CleanupStorageCopy(context.Context, string, string) err
 	return nil
 }
 
-func TestStorageCopyCleansTargetOnlyAfterLocalVerification(t *testing.T) {
+func TestStorageCopyDefersTargetCleanupUntilConsumerCommit(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "data"), []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
@@ -58,8 +58,14 @@ func TestStorageCopyCleansTargetOnlyAfterLocalVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !fixture.cleaned || copy.Token != "" || copy.ArchivePath == "" {
-		t.Fatal("verified target storage copy was not cleaned and retained locally")
+	if fixture.cleaned || copy.Token == "" || copy.ArchivePath == "" {
+		t.Fatal("verified local copy must retain target plaintext until its consumer commits")
+	}
+	if err := manager.FinalizeStorageCopy(context.Background(), fixture, &copy); err != nil {
+		t.Fatal(err)
+	}
+	if !fixture.cleaned || copy.Token != "" {
+		t.Fatal("consumer commit did not clean target plaintext and clear its token")
 	}
 	archivePath := copy.ArchivePath
 	if err := copy.Close(); err != nil {
