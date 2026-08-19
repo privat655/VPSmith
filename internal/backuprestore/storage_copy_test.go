@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,8 +21,9 @@ type storageFixture struct {
 func (s *storageFixture) PrepareStorageCopy(context.Context, string, []string) (string, string, int64, error) {
 	return "copy-test-1", s.sha, int64(len(s.data)), nil
 }
-func (s *storageFixture) TransferStorageCopy(context.Context, string, string) ([]byte, error) {
-	return append([]byte(nil), s.data...), nil
+func (s *storageFixture) TransferStorageCopy(_ context.Context, _, _ string, destination io.Writer) error {
+	_, err := destination.Write(s.data)
+	return err
 }
 func (s *storageFixture) CleanupStorageCopy(context.Context, string, string) error {
 	s.cleaned = true
