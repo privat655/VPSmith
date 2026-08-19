@@ -109,10 +109,10 @@ type ReconnectionDifference struct {
 }
 
 type ReconnectionReport struct {
-	TargetID    managementstate.TargetID   `json:"target_id"`
+	TargetID    managementstate.TargetID      `json:"target_id"`
 	Observed    managementstate.ObservedState `json:"observed"`
-	Matches     bool                       `json:"matches"`
-	Differences []ReconnectionDifference   `json:"differences"`
+	Matches     bool                          `json:"matches"`
+	Differences []ReconnectionDifference      `json:"differences"`
 }
 
 // Reconcile compares restored local execution history with immutable target
