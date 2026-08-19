@@ -95,11 +95,11 @@ setfacl -m u:12347:r-- /srv/vpsmith-storage-fixture/data
 		t.Fatal(err)
 	}
 	defer copyResult.Close()
-	if copyResult.Token != "" {
-		t.Fatalf("successful copy retained cleanup token %q", copyResult.Token)
+	if copyResult.Token == "" {
+		t.Fatal("verified local copy lost target cleanup token before consumer commit")
 	}
-	if got := strings.TrimSpace(run(t, "docker", "exec", cid, "sh", "-c", "find /var/lib/vpsmith/tmp/storage-copy -type f -print 2>/dev/null || true")); got != "" {
-		t.Fatalf("verified target plaintext was not cleaned up: %q", got)
+	if got := strings.TrimSpace(run(t, "docker", "exec", cid, "sh", "-c", "find /var/lib/vpsmith/tmp/storage-copy -type f -print 2>/dev/null || true")); got == "" {
+		t.Fatal("target plaintext was removed before the local consumer committed")
 	}
 
 	assertNumericArchiveOwner(t, copyResult.ArchivePath, "srv/vpsmith-storage-fixture/data", 12345, 12346)
@@ -135,6 +135,16 @@ setfacl -m u:12347:r-- /srv/vpsmith-storage-fixture/data
 	}
 	if _, err := unix.Getxattr(filepath.Join(base, "data"), "system.posix_acl_access", value); err != nil {
 		t.Fatalf("ACL xattr missing after real storage copy: %v", err)
+	}
+
+	if err := manager.FinalizeStorageCopy(ctx, storageTarget, &copyResult); err != nil {
+		t.Fatal(err)
+	}
+	if copyResult.Token != "" {
+		t.Fatalf("successful target cleanup retained token %q", copyResult.Token)
+	}
+	if got := strings.TrimSpace(run(t, "docker", "exec", cid, "sh", "-c", "find /var/lib/vpsmith/tmp/storage-copy -type f -print 2>/dev/null || true")); got != "" {
+		t.Fatalf("target plaintext survived consumer commit cleanup: %q", got)
 	}
 }
 
