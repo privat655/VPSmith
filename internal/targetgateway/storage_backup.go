@@ -22,7 +22,22 @@ func (e *StorageCopyProcessError) Error() string {
 	return fmt.Sprintf("target storage-copy %s failed with exit code %d", e.Operation, e.ExitCode)
 }
 
-func (g *Gateway) PrepareStorageCopy(ctx context.Context, targetID string, declaredPaths []string) (token, sha256 string, size int64, err error) {
+// StorageBackupTarget is the narrow Step-8 storage-copy adapter. Keeping this
+// capability outside Gateway's public surface preserves the target gateway's
+// deliberately small administrative API while reusing the exact same strict
+// SSH session, identity, and host-key verification path.
+type StorageBackupTarget struct {
+	gateway *Gateway
+}
+
+func NewStorageBackupTarget(gateway *Gateway) (*StorageBackupTarget, error) {
+	if gateway == nil {
+		return nil, errors.New("target gateway is required")
+	}
+	return &StorageBackupTarget{gateway: gateway}, nil
+}
+
+func (a *StorageBackupTarget) PrepareStorageCopy(ctx context.Context, targetID string, declaredPaths []string) (token, sha256 string, size int64, err error) {
 	if targetID == "" {
 		return "", "", 0, errors.New("target id is required")
 	}
@@ -30,12 +45,12 @@ func (g *Gateway) PrepareStorageCopy(ctx context.Context, targetID string, decla
 	if err != nil {
 		return "", "", 0, err
 	}
-	sess, err := g.strictSession(ctx, managementstate.TargetID(targetID))
+	sess, err := a.gateway.strictSession(ctx, managementstate.TargetID(targetID))
 	if err != nil {
 		return "", "", 0, err
 	}
 	defer zero(sess.IdentitySeed)
-	if adapter, ok := g.transport.(interface {
+	if adapter, ok := a.gateway.transport.(interface {
 		PrepareStorageCopy(context.Context, session, []string) (string, string, int64, error)
 	}); ok {
 		return adapter.PrepareStorageCopy(ctx, sess, paths)
@@ -43,16 +58,16 @@ func (g *Gateway) PrepareStorageCopy(ctx context.Context, targetID string, decla
 	return "", "", 0, errors.New("target transport does not support storage copy")
 }
 
-func (g *Gateway) TransferStorageCopy(ctx context.Context, targetID, token string) ([]byte, error) {
+func (a *StorageBackupTarget) TransferStorageCopy(ctx context.Context, targetID, token string) ([]byte, error) {
 	if targetID == "" || !safeStorageToken(token) {
 		return nil, errors.New("invalid target storage-copy identity")
 	}
-	sess, err := g.strictSession(ctx, managementstate.TargetID(targetID))
+	sess, err := a.gateway.strictSession(ctx, managementstate.TargetID(targetID))
 	if err != nil {
 		return nil, err
 	}
 	defer zero(sess.IdentitySeed)
-	if adapter, ok := g.transport.(interface {
+	if adapter, ok := a.gateway.transport.(interface {
 		TransferStorageCopy(context.Context, session, string) ([]byte, error)
 	}); ok {
 		return adapter.TransferStorageCopy(ctx, sess, token)
@@ -60,16 +75,16 @@ func (g *Gateway) TransferStorageCopy(ctx context.Context, targetID, token strin
 	return nil, errors.New("target transport does not support storage-copy transfer")
 }
 
-func (g *Gateway) CleanupStorageCopy(ctx context.Context, targetID, token string) error {
+func (a *StorageBackupTarget) CleanupStorageCopy(ctx context.Context, targetID, token string) error {
 	if targetID == "" || !safeStorageToken(token) {
 		return errors.New("invalid target storage-copy identity")
 	}
-	sess, err := g.strictSession(ctx, managementstate.TargetID(targetID))
+	sess, err := a.gateway.strictSession(ctx, managementstate.TargetID(targetID))
 	if err != nil {
 		return err
 	}
 	defer zero(sess.IdentitySeed)
-	if adapter, ok := g.transport.(interface {
+	if adapter, ok := a.gateway.transport.(interface {
 		CleanupStorageCopy(context.Context, session, string) error
 	}); ok {
 		return adapter.CleanupStorageCopy(ctx, sess, token)
