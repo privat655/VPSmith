@@ -2,6 +2,7 @@ package backuprestore
 
 import (
 	"archive/tar"
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -19,7 +20,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const xattrPAXPrefix = "VPSMITH.xattr."
+const (
+	xattrPAXPrefix         = "VPSMITH.xattr."
+	standardXattrPAXPrefix = "SCHILY.xattr."
+)
 
 type ArchiveOptions struct {
 	PreserveOwnership bool
@@ -381,23 +385,56 @@ func restoreMetadata(name string, header *tar.Header, options ArchiveOptions, sy
 			}
 		}
 	}
-	for key, value := range header.PAXRecords {
-		if !strings.HasPrefix(key, xattrPAXPrefix) {
-			continue
-		}
-		rawName, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(key, xattrPAXPrefix))
-		if err != nil || len(rawName) == 0 {
-			return errors.New("invalid archived xattr name")
-		}
-		rawValue, err := base64.StdEncoding.DecodeString(value)
-		if err != nil {
-			return errors.New("invalid archived xattr value")
-		}
-		if err := unix.Lsetxattr(name, string(rawName), rawValue, 0); err != nil {
-			return fmt.Errorf("restore xattr %s: %w", rawName, err)
+	xattrs, err := archivedXattrs(header)
+	if err != nil {
+		return err
+	}
+	for attrName, value := range xattrs {
+		if err := unix.Lsetxattr(name, attrName, value, 0); err != nil {
+			return fmt.Errorf("restore xattr %s: %w", attrName, err)
 		}
 	}
 	return nil
+}
+
+func archivedXattrs(header *tar.Header) (map[string][]byte, error) {
+	result := map[string][]byte{}
+	add := func(name string, value []byte) error {
+		if name == "" || strings.ContainsRune(name, '\x00') {
+			return errors.New("invalid archived xattr name")
+		}
+		if existing, ok := result[name]; ok && !bytes.Equal(existing, value) {
+			return fmt.Errorf("conflicting archived xattr %s", name)
+		}
+		result[name] = append([]byte(nil), value...)
+		return nil
+	}
+	for key, value := range header.PAXRecords {
+		switch {
+		case strings.HasPrefix(key, xattrPAXPrefix):
+			rawName, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(key, xattrPAXPrefix))
+			if err != nil || len(rawName) == 0 {
+				return nil, errors.New("invalid archived xattr name")
+			}
+			rawValue, err := base64.StdEncoding.DecodeString(value)
+			if err != nil {
+				return nil, errors.New("invalid archived xattr value")
+			}
+			if err := add(string(rawName), rawValue); err != nil {
+				return nil, err
+			}
+		case strings.HasPrefix(key, standardXattrPAXPrefix):
+			if err := add(strings.TrimPrefix(key, standardXattrPAXPrefix), []byte(value)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for key, value := range header.Xattrs {
+		if err := add(key, []byte(value)); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func readXattrs(name string) (map[string][]byte, error) {
