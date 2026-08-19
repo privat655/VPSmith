@@ -141,10 +141,10 @@ func (l *Library) PrepareRecoveryImport(ctx context.Context, sourceRoot string, 
 			return fail(err)
 		}
 		target := filepath.Join(l.root, filepath.FromSlash(workspace.StorageRef))
-		if _, err := os.Lstat(target); err == nil {
-			return fail(fmt.Errorf("recovery source workspace %s already exists", workspace.ID))
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fail(err)
+		if reused, err := reusableRecoveryTree(target, workspace.CurrentSHA256); err != nil {
+			return fail(fmt.Errorf("verify existing source workspace %s: %w", workspace.ID, err))
+		} else if reused {
+			continue
 		}
 		stage := filepath.Join(stageRoot, fmt.Sprintf("tree-%06d", index))
 		index++
@@ -154,7 +154,7 @@ func (l *Library) PrepareRecoveryImport(ctx context.Context, sourceRoot string, 
 		if err := verifyRecoveryTree(stage, workspace.CurrentSHA256, "staged source workspace", string(workspace.ID)); err != nil {
 			return fail(err)
 		}
-		prepared.trees = append(prepared.trees, recoveryTree{stagePath: stage, targetPath: target, expectedSHA: workspace.CurrentSHA256})
+		prepared.trees = append(prepared.trees, recoveryTree{stagePath: stage, targetPath: target, expectedSHA: workspace.CurrentSHA256, reusable: true})
 	}
 	return prepared, nil
 }
@@ -255,7 +255,7 @@ func reusableRecoveryTree(target, expectedSHA string) (bool, error) {
 		return false, err
 	}
 	if actual != expectedSHA {
-		return false, errors.New("existing immutable source artifact differs")
+		return false, errors.New("existing recovery source tree differs")
 	}
 	return true, nil
 }
