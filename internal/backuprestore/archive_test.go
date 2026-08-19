@@ -2,6 +2,7 @@ package backuprestore
 
 import (
 	"archive/tar"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -32,8 +33,13 @@ func TestTarZstRoundTripPreservesFilesystemContract(t *testing.T) {
 	if err := os.Symlink("data", filepath.Join(root, "sym")); err != nil {
 		t.Fatal(err)
 	}
-	if err := unix.Setxattr(file, "user.vpsmith", []byte("xattr-value"), 0); err != nil && err != unix.ENOTSUP {
-		t.Fatal(err)
+	xattrSupported := true
+	if err := unix.Setxattr(file, "user.vpsmith", []byte("xattr-value"), 0); err != nil {
+		if err == unix.ENOTSUP {
+			xattrSupported = false
+		} else {
+			t.Fatal(err)
+		}
 	}
 	archive := filepath.Join(t.TempDir(), "payload.tar.zst")
 	if err := CreateTarZst(root, archive); err != nil {
@@ -72,9 +78,61 @@ func TestTarZstRoundTripPreservesFilesystemContract(t *testing.T) {
 	if empty, err := os.Stat(filepath.Join(out, "empty")); err != nil || !empty.IsDir() {
 		t.Fatalf("empty directory missing: %v", err)
 	}
-	value := make([]byte, 64)
-	if n, err := unix.Getxattr(filepath.Join(out, "data"), "user.vpsmith", value); err == nil && string(value[:n]) != "xattr-value" {
+	if xattrSupported {
+		value := make([]byte, 64)
+		n, err := unix.Getxattr(filepath.Join(out, "data"), "user.vpsmith", value)
+		if err != nil {
+			t.Fatalf("restored xattr missing: %v", err)
+		}
+		if string(value[:n]) != "xattr-value" {
+			t.Fatalf("xattr=%q", value[:n])
+		}
+	}
+}
+
+func TestExtractTarZstAcceptsGNUStandardXattrPAX(t *testing.T) {
+	probe := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(probe, []byte("probe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Setxattr(probe, "user.vpsmith", []byte("probe"), 0); err == unix.ENOTSUP {
+		t.Skip("filesystem does not support xattrs")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(t.TempDir(), "gnu.tar.zst")
+	writeRawTarZst(t, archive, tar.Header{
+		Name:       "data",
+		Mode:       0o600,
+		Size:       4,
+		Typeflag:   tar.TypeReg,
+		PAXRecords: map[string]string{"SCHILY.xattr.user.vpsmith": "gnu"},
+	})
+	out := filepath.Join(t.TempDir(), "restore")
+	if err := ExtractTarZst(archive, out, ArchiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	value := make([]byte, 16)
+	n, err := unix.Getxattr(filepath.Join(out, "data"), "user.vpsmith", value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(value[:n]) != "gnu" {
 		t.Fatalf("xattr=%q", value[:n])
+	}
+}
+
+func TestArchivedXattrsRejectsConflictingRepresentations(t *testing.T) {
+	key := base64.RawURLEncoding.EncodeToString([]byte("user.vpsmith"))
+	header := &tar.Header{
+		PAXRecords: map[string]string{
+			xattrPAXPrefix + key:                 base64.StdEncoding.EncodeToString([]byte("vpsmith")),
+			standardXattrPAXPrefix + "user.vpsmith": "gnu",
+		},
+	}
+	if _, err := archivedXattrs(header); err == nil {
+		t.Fatal("conflicting xattr representations were accepted")
 	}
 }
 
