@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -25,61 +24,11 @@ func (execRunner) RunInput(ctx context.Context, input []byte, name string, args 
 }
 
 func (t *sshTransport) runRemoteInput(ctx context.Context, sess session, remoteCommand string, input []byte) ([]byte, []byte, error) {
-	parsed, err := parseEndpoint(sess.Address)
+	args, cleanup, err := t.prepareSSHInvocation(sess, remoteCommand)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !safeSSHUser(sess.SSHUser) {
-		return nil, nil, errors.New("invalid ssh user")
-	}
-	if t.runtimeDir == "" {
-		return nil, nil, errors.New("ssh runtime directory is required")
-	}
-	if err := os.MkdirAll(t.runtimeDir, 0o700); err != nil {
-		return nil, nil, fmt.Errorf("create ssh runtime directory: %w", err)
-	}
-	if err := os.Chmod(t.runtimeDir, 0o700); err != nil {
-		return nil, nil, fmt.Errorf("secure ssh runtime directory: %w", err)
-	}
-	privateKey, err := marshalOpenSSHPrivateKey("vpsmith:"+sess.SSHUser+"@"+parsed.host, sess.IdentitySeed)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer zero(privateKey)
-	identityFile, err := writeExclusiveTemp(t.runtimeDir, "identity-", privateKey, 0o600)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer os.Remove(identityFile)
-	knownHost := knownHostsName(parsed) + " " + strings.TrimSpace(sess.HostKey) + "\n"
-	knownHostsFile, err := writeExclusiveTemp(t.runtimeDir, "known-hosts-", []byte(knownHost), 0o600)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer os.Remove(knownHostsFile)
-	args := []string{
-		"-F", "none", "-a", "-x", "-T",
-		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=yes",
-		"-o", "UserKnownHostsFile=" + knownHostsFile,
-		"-o", "GlobalKnownHostsFile=/dev/null",
-		"-o", "UpdateHostKeys=no",
-		"-o", "CheckHostIP=no",
-		"-o", "VerifyHostKeyDNS=no",
-		"-o", "IdentitiesOnly=yes",
-		"-o", "IdentityAgent=none",
-		"-o", "PasswordAuthentication=no",
-		"-o", "KbdInteractiveAuthentication=no",
-		"-o", "PubkeyAuthentication=yes",
-		"-o", "ClearAllForwardings=yes",
-		"-o", "PermitLocalCommand=no",
-		"-o", "ConnectTimeout=8",
-		"-o", "ConnectionAttempts=1",
-		"-i", identityFile,
-		"-p", parsed.port,
-		sess.SSHUser + "@" + parsed.host,
-		remoteCommand,
-	}
+	defer cleanup()
 	runner, ok := t.runner.(inputProcessRunner)
 	if !ok {
 		return nil, nil, errors.New("ssh process runner does not support stdin")

@@ -15,6 +15,24 @@ import (
 
 const FormatVersion = 1
 
+type ArtifactIdentity struct {
+	SubjectKind             string                     `yaml:"subject_kind"`
+	SubjectID               string                     `yaml:"subject_id"`
+	Version                 string                     `yaml:"version"`
+	GitCommit               string                     `yaml:"git_commit,omitempty"`
+	PackageSHA256           string                     `yaml:"package_sha256"`
+	Images                  []ImageIdentity            `yaml:"images,omitempty"`
+	StoragePaths            []string                   `yaml:"storage_paths,omitempty"`
+	SecretIDs               []managementstate.SecretID `yaml:"secret_ids,omitempty"`
+	PreviousDesiredStateRef string                     `yaml:"previous_desired_state_ref,omitempty"`
+	ExecutionBundleRef      string                     `yaml:"execution_bundle_ref,omitempty"`
+}
+
+type ImageIdentity struct {
+	Name   string `yaml:"name"`
+	Digest string `yaml:"digest"`
+}
+
 type Manifest struct {
 	FormatVersion    int                                `yaml:"format_version"`
 	ArtifactType     managementstate.BackupArtifactType `yaml:"artifact_type"`
@@ -22,6 +40,7 @@ type Manifest struct {
 	CreatedAt        string                             `yaml:"created_at"`
 	TargetID         managementstate.TargetID           `yaml:"target_id"`
 	ModuleInstanceID managementstate.ModuleInstanceID   `yaml:"module_instance_id,omitempty"`
+	Identity         *ArtifactIdentity                  `yaml:"identity,omitempty"`
 	SourceRefs       []string                           `yaml:"source_refs,omitempty"`
 	BundleRefs       []string                           `yaml:"bundle_refs,omitempty"`
 	PayloadInventory []PayloadItem                      `yaml:"payload_inventory"`
@@ -35,6 +54,7 @@ type PayloadItem struct {
 }
 
 type PayloadDescriptor struct {
+	Identity    *ArtifactIdentity
 	SourceRefs  []string
 	BundleRefs  []string
 	RestoreRefs []string
@@ -166,10 +186,14 @@ func (m *Manager) Create(ctx context.Context, request CreateRequest) (Artifact, 
 		CreatedAt:        m.now().UTC().Format(time.RFC3339Nano),
 		TargetID:         request.TargetID,
 		ModuleInstanceID: request.ModuleInstanceID,
+		Identity:         normalizeArtifactIdentity(descriptor.Identity),
 		SourceRefs:       sortedUnique(descriptor.SourceRefs),
 		BundleRefs:       sortedUnique(descriptor.BundleRefs),
 		RestoreRefs:      sortedUnique(descriptor.RestoreRefs),
 		PayloadInventory: inventory(entries),
+	}
+	if err := validateManifest(manifest, request.Type); err != nil {
+		return Artifact{}, fmt.Errorf("validate backup manifest: %w", err)
 	}
 	if request.Type == managementstate.BackupSystemRestorePoint {
 		return m.publishRestorePoint(ctx, payloadArchive, manifest)
@@ -270,16 +294,31 @@ func (m *Manager) Delete(ctx context.Context, id managementstate.BackupArtifactI
 	if err != nil {
 		return err
 	}
-	path, err := m.locationPath(artifact.LocationRef)
+	artifactPath, err := m.locationPath(artifact.LocationRef)
 	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("delete backup artifact bytes: %w", err)
+	tombstone := filepath.Join(m.root, ".delete-"+string(id))
+	if _, err := os.Lstat(tombstone); err == nil {
+		return errors.New("backup deletion tombstone already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	return m.state.Change(ctx, func(change *managementstate.Change) error {
+	if err := os.Rename(artifactPath, tombstone); err != nil {
+		return fmt.Errorf("stage backup artifact deletion: %w", err)
+	}
+	if err := m.state.Change(ctx, func(change *managementstate.Change) error {
 		return change.DeleteBackup(id)
-	})
+	}); err != nil {
+		if rollbackErr := os.Rename(tombstone, artifactPath); rollbackErr != nil {
+			return fmt.Errorf("delete backup catalogue entry: %w; restore artifact after failed catalogue delete: %v", err, rollbackErr)
+		}
+		return err
+	}
+	if err := os.RemoveAll(tombstone); err != nil {
+		return fmt.Errorf("cleanup deleted backup artifact bytes: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) Root() string { return m.root }
@@ -422,4 +461,15 @@ func (m *Manager) newWorkDir(kind string) (string, error) {
 		return "", fmt.Errorf("secure volatile backup work directory: %w", err)
 	}
 	return work, nil
+}
+
+func normalizeArtifactIdentity(value *ArtifactIdentity) *ArtifactIdentity {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	out.StoragePaths = sortedUnique(value.StoragePaths)
+	out.Images = append([]ImageIdentity(nil), value.Images...)
+	out.SecretIDs = append([]managementstate.SecretID(nil), value.SecretIDs...)
+	return &out
 }

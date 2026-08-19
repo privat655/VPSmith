@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -27,6 +28,10 @@ type processRunner interface {
 	Run(context.Context, string, ...string) ([]byte, []byte, error)
 }
 
+type outputProcessRunner interface {
+	RunOutput(context.Context, io.Writer, string, ...string) ([]byte, error)
+}
+
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
@@ -36,6 +41,15 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	command.Stderr = &stderr
 	err := command.Run()
 	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+func (execRunner) RunOutput(ctx context.Context, output io.Writer, name string, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Stdout = output
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	err := command.Run()
+	return stderr.Bytes(), err
 }
 
 type sshTransport struct {
@@ -166,6 +180,39 @@ func (t *sshTransport) runRemote(ctx context.Context, sess session, remoteComman
 }
 
 func (t *sshTransport) runRemoteStreams(ctx context.Context, sess session, remoteCommand string) ([]byte, []byte, error) {
+	args, cleanup, err := t.prepareSSHInvocation(sess, remoteCommand)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cleanup()
+	stdout, stderr, err := t.runner.Run(ctx, "ssh", args...)
+	if err != nil {
+		return nil, nil, errors.New("strict ssh read operation failed")
+	}
+	return stdout, stderr, nil
+}
+
+func (t *sshTransport) runRemoteOutput(ctx context.Context, sess session, remoteCommand string, output io.Writer) ([]byte, error) {
+	if output == nil {
+		return nil, errors.New("ssh output writer is required")
+	}
+	args, cleanup, err := t.prepareSSHInvocation(sess, remoteCommand)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	runner, ok := t.runner.(outputProcessRunner)
+	if !ok {
+		return nil, errors.New("ssh process runner does not support streamed stdout")
+	}
+	stderr, err := runner.RunOutput(ctx, output, "ssh", args...)
+	if err != nil {
+		return stderr, errors.New("strict ssh streamed operation failed")
+	}
+	return stderr, nil
+}
+
+func (t *sshTransport) prepareSSHInvocation(sess session, remoteCommand string) ([]string, func(), error) {
 	parsed, err := parseEndpoint(sess.Address)
 	if err != nil {
 		return nil, nil, err
@@ -186,18 +233,21 @@ func (t *sshTransport) runRemoteStreams(ctx context.Context, sess session, remot
 	if err != nil {
 		return nil, nil, err
 	}
-	defer zero(privateKey)
 	identityFile, err := writeExclusiveTemp(t.runtimeDir, "identity-", privateKey, 0o600)
+	zero(privateKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer os.Remove(identityFile)
 	knownHost := knownHostsName(parsed) + " " + strings.TrimSpace(sess.HostKey) + "\n"
 	knownHostsFile, err := writeExclusiveTemp(t.runtimeDir, "known-hosts-", []byte(knownHost), 0o600)
 	if err != nil {
+		_ = os.Remove(identityFile)
 		return nil, nil, err
 	}
-	defer os.Remove(knownHostsFile)
+	cleanup := func() {
+		_ = os.Remove(identityFile)
+		_ = os.Remove(knownHostsFile)
+	}
 	args := []string{
 		"-F", "none", "-a", "-x", "-T",
 		"-o", "BatchMode=yes",
@@ -221,11 +271,7 @@ func (t *sshTransport) runRemoteStreams(ctx context.Context, sess session, remot
 		sess.SSHUser + "@" + parsed.host,
 		remoteCommand,
 	}
-	stdout, stderr, err := t.runner.Run(ctx, "ssh", args...)
-	if err != nil {
-		return nil, nil, errors.New("strict ssh read operation failed")
-	}
-	return stdout, stderr, nil
+	return args, cleanup, nil
 }
 
 func writeExclusiveTemp(dir, pattern string, content []byte, mode os.FileMode) (string, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,15 +21,16 @@ type storageFixture struct {
 func (s *storageFixture) PrepareStorageCopy(context.Context, string, []string) (string, string, int64, error) {
 	return "copy-test-1", s.sha, int64(len(s.data)), nil
 }
-func (s *storageFixture) TransferStorageCopy(context.Context, string, string) ([]byte, error) {
-	return append([]byte(nil), s.data...), nil
+func (s *storageFixture) TransferStorageCopy(_ context.Context, _, _ string, destination io.Writer) error {
+	_, err := destination.Write(s.data)
+	return err
 }
 func (s *storageFixture) CleanupStorageCopy(context.Context, string, string) error {
 	s.cleaned = true
 	return nil
 }
 
-func TestStorageCopyCleansTargetOnlyAfterLocalVerification(t *testing.T) {
+func TestStorageCopyDefersTargetCleanupUntilConsumerCommit(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "data"), []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
@@ -56,8 +58,14 @@ func TestStorageCopyCleansTargetOnlyAfterLocalVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !fixture.cleaned || copy.Token != "" || copy.ArchivePath == "" {
-		t.Fatal("verified target storage copy was not cleaned and retained locally")
+	if fixture.cleaned || copy.Token == "" || copy.ArchivePath == "" {
+		t.Fatal("verified local copy must retain target plaintext until its consumer commits")
+	}
+	if err := manager.FinalizeStorageCopy(context.Background(), fixture, &copy); err != nil {
+		t.Fatal(err)
+	}
+	if !fixture.cleaned || copy.Token != "" {
+		t.Fatal("consumer commit did not clean target plaintext and clear its token")
 	}
 	archivePath := copy.ArchivePath
 	if err := copy.Close(); err != nil {

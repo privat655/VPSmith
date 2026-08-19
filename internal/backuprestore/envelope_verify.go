@@ -148,6 +148,9 @@ func validateManifest(manifest Manifest, expected managementstate.BackupArtifact
 		if manifest.ModuleInstanceID == "" {
 			return errors.New("module backup manifest is missing module instance id")
 		}
+		if err := validateModuleArtifactIdentity(manifest); err != nil {
+			return err
+		}
 	} else if manifest.ModuleInstanceID != "" {
 		return errors.New("non-module backup manifest carries module instance id")
 	}
@@ -157,6 +160,64 @@ func validateManifest(manifest Manifest, expected managementstate.BackupArtifact
 		}
 	}
 	return nil
+}
+
+func validateModuleArtifactIdentity(manifest Manifest) error {
+	identity := manifest.Identity
+	if identity == nil {
+		return errors.New("module backup manifest is missing exact artifact identity")
+	}
+	if identity.SubjectKind != "module" || strings.TrimSpace(identity.SubjectID) == "" || strings.TrimSpace(identity.Version) == "" || !validGitCommit(identity.GitCommit) || !validSHA256(identity.PackageSHA256) {
+		return errors.New("module backup manifest has incomplete module identity")
+	}
+	if len(identity.Images) == 0 {
+		return errors.New("module backup manifest is missing image identities")
+	}
+	seenImages := map[string]struct{}{}
+	for _, image := range identity.Images {
+		if strings.TrimSpace(image.Name) == "" || !strings.HasPrefix(image.Digest, "sha256:") || !validSHA256(strings.TrimPrefix(image.Digest, "sha256:")) {
+			return errors.New("module backup manifest has invalid image identity")
+		}
+		if _, exists := seenImages[image.Name]; exists {
+			return errors.New("module backup manifest has duplicate image identity")
+		}
+		seenImages[image.Name] = struct{}{}
+	}
+	if len(identity.StoragePaths) == 0 {
+		return errors.New("module backup manifest is missing declared storage paths")
+	}
+	for _, storagePath := range identity.StoragePaths {
+		if storagePath == "" || !strings.HasPrefix(storagePath, "/") || filepath.Clean(storagePath) != storagePath || storagePath == "/" {
+			return errors.New("module backup manifest has invalid storage path")
+		}
+	}
+	seenSecrets := map[managementstate.SecretID]struct{}{}
+	for _, secretID := range identity.SecretIDs {
+		if secretID == "" {
+			return errors.New("module backup manifest has empty secret id")
+		}
+		if _, exists := seenSecrets[secretID]; exists {
+			return errors.New("module backup manifest has duplicate secret id")
+		}
+		seenSecrets[secretID] = struct{}{}
+	}
+	if manifest.ArtifactType == managementstate.BackupSystemRestorePoint && strings.TrimSpace(identity.PreviousDesiredStateRef) == "" && strings.TrimSpace(identity.ExecutionBundleRef) == "" {
+		return errors.New("system restore point is missing previous desired state or execution bundle reference")
+	}
+	return nil
+}
+
+func validGitCommit(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func inspectRestorePoint(filename string, expected managementstate.BackupArtifactType) (*Inspection, error) {
