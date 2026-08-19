@@ -32,7 +32,7 @@ func TestStreamedStorageTransferUsesSharedStrictSSHInvocation(t *testing.T) {
 	var output bytes.Buffer
 	stderr, err := transport.runRemoteOutput(context.Background(), session{
 		endpoint: endpoint{Address: "203.0.113.10", SSHUser: "dev"},
-		HostKey: key.PublicKey, IdentitySeed: bytes.Repeat([]byte{4}, 32),
+		HostKey:  key.PublicKey, IdentitySeed: bytes.Repeat([]byte{4}, 32),
 	}, "cat storage", &output)
 	if err != nil {
 		t.Fatal(err)
