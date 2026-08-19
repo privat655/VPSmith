@@ -313,9 +313,22 @@ func TestRecoveryPayloadDoesNotContainProductStorage(t *testing.T) {
 	} else if len(entries) != 3 {
 		t.Fatalf("unexpected recovery payload shape: %d entries", len(entries))
 	}
-	if data, err := os.ReadFile(filepath.Join(inspection.CandidateRoot, managementStateFile)); err != nil {
+	if err := filepath.WalkDir(inspection.CandidateRoot, func(name string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), marker) {
+			return errors.New("productive module storage marker leaked into recovery package")
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
-	} else if strings.Contains(string(data), marker) {
-		t.Fatal("productive module storage marker leaked into recovery package")
 	}
 }
