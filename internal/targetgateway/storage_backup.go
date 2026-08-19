@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"strconv"
 	"strings"
@@ -58,21 +59,21 @@ func (a *StorageBackupTarget) PrepareStorageCopy(ctx context.Context, targetID s
 	return "", "", 0, errors.New("target transport does not support storage copy")
 }
 
-func (a *StorageBackupTarget) TransferStorageCopy(ctx context.Context, targetID, token string) ([]byte, error) {
-	if targetID == "" || !safeStorageToken(token) {
-		return nil, errors.New("invalid target storage-copy identity")
+func (a *StorageBackupTarget) TransferStorageCopy(ctx context.Context, targetID, token string, destination io.Writer) error {
+	if targetID == "" || !safeStorageToken(token) || destination == nil {
+		return errors.New("invalid target storage-copy transfer")
 	}
 	sess, err := a.gateway.strictSession(ctx, managementstate.TargetID(targetID))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer zero(sess.IdentitySeed)
 	if adapter, ok := a.gateway.transport.(interface {
-		TransferStorageCopy(context.Context, session, string) ([]byte, error)
+		TransferStorageCopy(context.Context, session, string, io.Writer) error
 	}); ok {
-		return adapter.TransferStorageCopy(ctx, sess, token)
+		return adapter.TransferStorageCopy(ctx, sess, token, destination)
 	}
-	return nil, errors.New("target transport does not support storage-copy transfer")
+	return errors.New("target transport does not support storage-copy transfer")
 }
 
 func (a *StorageBackupTarget) CleanupStorageCopy(ctx context.Context, targetID, token string) error {
@@ -128,17 +129,17 @@ func (t *sshTransport) PrepareStorageCopy(ctx context.Context, sess session, dec
 	return fields[1], fields[2], size, nil
 }
 
-func (t *sshTransport) TransferStorageCopy(ctx context.Context, sess session, token string) ([]byte, error) {
-	if !safeStorageToken(token) {
-		return nil, errors.New("invalid storage-copy token")
+func (t *sshTransport) TransferStorageCopy(ctx context.Context, sess session, token string, destination io.Writer) error {
+	if !safeStorageToken(token) || destination == nil {
+		return errors.New("invalid storage-copy transfer")
 	}
 	filename := path.Join(storageCopyRoot, token+".tar.zst")
 	command := "sudo -n test -f " + shellQuote(filename) + " && sudo -n cat -- " + shellQuote(filename)
-	data, err := t.runRemote(ctx, sess, command)
+	stderr, err := t.runRemoteOutput(ctx, sess, command, destination)
 	if err != nil {
-		return nil, fmt.Errorf("transfer target storage-copy: %w", err)
+		return fmt.Errorf("transfer target storage-copy: %w%s", err, boundedRemoteError(stderr))
 	}
-	return data, nil
+	return nil
 }
 
 func (t *sshTransport) CleanupStorageCopy(ctx context.Context, sess session, token string) error {
