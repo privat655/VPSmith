@@ -31,7 +31,7 @@ func TestCompareReconnectionReportsHistoryDriftWithoutChoosingWinner(t *testing.
 	observed := managementstate.ObservedState{Core: managementstate.CoreObservedState{ExecutionProofs: []managementstate.ExecutionProofObservedState{{
 		ID: string(runID), BundleID: string(bundleID),
 		BundleSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Kind: "installation", Outcome: "failed",
+		Kind:         "installation", Outcome: "failed",
 	}}}}
 	report := compareReconnection(snapshot, target, observed)
 	if report.Matches {
