@@ -167,7 +167,7 @@ func validateModuleArtifactIdentity(manifest Manifest) error {
 	if identity == nil {
 		return errors.New("module backup manifest is missing exact artifact identity")
 	}
-	if identity.SubjectKind != "module" || identity.SubjectID != string(manifest.ModuleInstanceID) || strings.TrimSpace(identity.Version) == "" || strings.TrimSpace(identity.GitCommit) == "" || !validSHA256(identity.PackageSHA256) {
+	if identity.SubjectKind != "module" || strings.TrimSpace(identity.SubjectID) == "" || strings.TrimSpace(identity.Version) == "" || !validGitCommit(identity.GitCommit) || !validSHA256(identity.PackageSHA256) {
 		return errors.New("module backup manifest has incomplete module identity")
 	}
 	if len(identity.Images) == 0 {
@@ -205,6 +205,19 @@ func validateModuleArtifactIdentity(manifest Manifest) error {
 		return errors.New("system restore point is missing previous desired state or execution bundle reference")
 	}
 	return nil
+}
+
+func validGitCommit(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func inspectRestorePoint(filename string, expected managementstate.BackupArtifactType) (*Inspection, error) {
