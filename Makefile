@@ -7,7 +7,7 @@ fmt:
 
 fmt-check:
 	@files="$$(gofmt -l cmd internal build/cmd tests)"; \
-	if [ -n "$$files" ]; then printf 'gofmt required:\n%s\n' "$$files" >&2; gofmt -d $$files; exit 1; fi
+	if [ -n "$$files" ]; then printf 'gofmt required:\n%s\n' "$$files" >&2; exit 1; fi
 
 vet:
 	$(GO) vet ./...
