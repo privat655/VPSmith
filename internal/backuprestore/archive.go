@@ -239,6 +239,9 @@ func ExtractTarZst(filename, root string, options ArchiveOptions) error {
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
+			if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+				return err
+			}
 			if err := os.Mkdir(destination, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 				return err
 			}
