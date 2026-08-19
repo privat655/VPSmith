@@ -146,6 +146,22 @@ func TestInspectAndExtractAcceptGNUDirectoryTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestExtractTarZstCreatesImplicitParentDirectoriesForNestedGNUEntries(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "nested-gnu-directory.tar.zst")
+	writeRawTarZst(t, archive, tar.Header{Name: "srv/vpsmith-storage-fixture/", Mode: 0o751, Typeflag: tar.TypeDir})
+	out := filepath.Join(t.TempDir(), "restore")
+	if err := ExtractTarZst(archive, out, ArchiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(out, "srv", "vpsmith-storage-fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o751 {
+		t.Fatalf("nested directory mode=%o", info.Mode().Perm())
+	}
+}
+
 func TestArchivedXattrsRejectsConflictingRepresentations(t *testing.T) {
 	key := base64.RawURLEncoding.EncodeToString([]byte("user.vpsmith"))
 	header := &tar.Header{
