@@ -127,7 +127,7 @@ func TestArchivedXattrsRejectsConflictingRepresentations(t *testing.T) {
 	key := base64.RawURLEncoding.EncodeToString([]byte("user.vpsmith"))
 	header := &tar.Header{
 		PAXRecords: map[string]string{
-			xattrPAXPrefix + key:                 base64.StdEncoding.EncodeToString([]byte("vpsmith")),
+			xattrPAXPrefix + key:                    base64.StdEncoding.EncodeToString([]byte("vpsmith")),
 			standardXattrPAXPrefix + "user.vpsmith": "gnu",
 		},
 	}
