@@ -9,11 +9,15 @@ import (
 func TestApplicationExposesCanonicalCoreLifecycle(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	embedded, err := filepath.Abs(filepath.Join("..", "..", "embedded"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	app, err := Open(context.Background(), Paths{
 		StateDir:      filepath.Join(root, "state"),
 		SourcesDir:    filepath.Join(root, "sources"),
 		BackupsDir:    filepath.Join(root, "backups"),
-		EmbeddedRoot:  filepath.Join("..", "..", "embedded"),
+		EmbeddedRoot:  embedded,
 		SSHRuntimeDir: filepath.Join(root, "runtime", "ssh"),
 		BundlesDir:    filepath.Join(root, "bundles"),
 	})
