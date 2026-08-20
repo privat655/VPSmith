@@ -56,12 +56,30 @@ func (t *sshTransport) StageCoreRestorePayload(ctx context.Context, sess session
 	root := coreRestoreRoot + "/" + bundleID
 	script := `set -eu
 umask 077
+base=` + shellQuote(coreRestoreRoot) + `
 root=` + shellQuote(root) + `
+claim="$base/active"
 dest="$root/payload.tar.zst"
 tmp="$dest.upload.$$"
-cleanup() { sudo -n rm -f -- "$tmp"; }
+claimed=0
+success=0
+cleanup() {
+  sudo -n rm -f -- "$tmp" || true
+  if [ "$success" -ne 1 ] && [ "$claimed" -eq 1 ]; then
+    sudo -n rm -rf -- "$claim" "$root" || true
+  fi
+}
 trap cleanup EXIT HUP INT TERM
-sudo -n install -d -o root -g root -m 0700 ` + shellQuote(coreRestoreRoot) + ` "$root"
+sudo -n install -d -o root -g root -m 0700 "$base"
+if sudo -n mkdir -m 0700 "$claim" 2>/dev/null; then
+  printf '%s\n' ` + shellQuote(bundleID) + ` | sudo -n tee "$claim/bundle" >/dev/null
+  sudo -n chmod 0400 "$claim/bundle"
+  claimed=1
+else
+  active=$(sudo -n cat "$claim/bundle" 2>/dev/null || true)
+  [ "$active" = ` + shellQuote(bundleID) + ` ] || { echo 'another Core restore payload is already staged' >&2; exit 64; }
+fi
+sudo -n install -d -o root -g root -m 0700 "$root"
 sudo -n sh -eu -c 'cat > "$1"' sh "$tmp"
 got=$(sudo -n sha256sum -- "$tmp"); got=${got%% *}
 size=$(sudo -n stat -c %s -- "$tmp")
@@ -78,6 +96,7 @@ else
 fi
 sudo -n test -f "$dest"
 sudo -n test "$(sudo -n stat -c %a -- "$dest")" = 400
+success=1
 `
 	_, stderr, err := t.runRemoteInputStream(ctx, sess, script, input)
 	if err != nil {
@@ -91,7 +110,18 @@ func (t *sshTransport) CleanupCoreRestorePayload(ctx context.Context, sess sessi
 		return errors.New("invalid Core restore bundle identity")
 	}
 	root := coreRestoreRoot + "/" + bundleID
-	if _, err := t.runRemote(ctx, sess, "sudo -n rm -rf -- "+shellQuote(root)); err != nil {
+	script := `set -eu
+base=` + shellQuote(coreRestoreRoot) + `
+claim="$base/active"
+active=$(sudo -n cat "$claim/bundle" 2>/dev/null || true)
+if [ -n "$active" ] && [ "$active" != ` + shellQuote(bundleID) + ` ]; then
+  echo 'Core restore cleanup identity mismatch' >&2
+  exit 65
+fi
+sudo -n rm -rf -- ` + shellQuote(root) + `
+if [ "$active" = ` + shellQuote(bundleID) + ` ]; then sudo -n rm -rf -- "$claim"; fi
+`
+	if _, err := t.runRemote(ctx, sess, script); err != nil {
 		return fmt.Errorf("cleanup Core restore payload: %w", err)
 	}
 	return nil
