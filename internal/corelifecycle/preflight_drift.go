@@ -20,6 +20,9 @@ func requireSteadyCoreBeforeMutation(snapshot managementstate.Snapshot, target m
 	if err != nil {
 		return err
 	}
+	if artifact.Version != desired.Version {
+		return errors.New("Core desired source version does not match canonical source artifact")
+	}
 	if observed.Core.SourceID != desired.SourceID || observed.Core.Version != desired.Version || observed.Core.PackageSHA256 != artifact.SHA256 {
 		return errors.New("Core desired/observed identity drift blocks mutation")
 	}
