@@ -46,6 +46,7 @@ type Lifecycle struct {
 	executor  *execution.Executor
 	backups   *backuprestore.Manager
 	storage   CoreBackupStorage
+	dns       dnsResolver
 }
 
 type CoreConfiguration struct {
@@ -93,7 +94,7 @@ func New(state *managementstate.Store, sources Sources, inspector Inspector, com
 	if state == nil || sources == nil || inspector == nil || compiler == nil || executor == nil || backups == nil || storage == nil {
 		return nil, errors.New("complete Core lifecycle dependencies are required")
 	}
-	return &Lifecycle{state: state, sources: sources, inspector: inspector, compiler: compiler, executor: executor, backups: backups, storage: storage}, nil
+	return &Lifecycle{state: state, sources: sources, inspector: inspector, compiler: compiler, executor: executor, backups: backups, storage: storage, dns: net.DefaultResolver}, nil
 }
 
 func (l *Lifecycle) PrepareInstall(ctx context.Context, req PrepareRequest) (Prepared, error) {
@@ -308,7 +309,11 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	if err != nil {
 		return Prepared{}, err
 	}
-	if err := requireDNSARecord(ctx, net.DefaultResolver, "auth."+desiredCore.Domain, target.Address); err != nil {
+	resolver := l.dns
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	if err := requireDNSARecord(ctx, resolver, "auth."+desiredCore.Domain, target.Address); err != nil {
 		return Prepared{}, err
 	}
 	if kind == deployment.Update || kind == deployment.Restore {
