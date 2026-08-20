@@ -40,7 +40,7 @@ func TestRegisterBundlePersistsConcreteBackupReference(t *testing.T) {
 	if len(snapshot.ExecutionBundles) != 1 {
 		t.Fatalf("execution bundles=%d", len(snapshot.ExecutionBundles))
 	}
-	if got := snapshot.ExecutionBundles[0].BackupRef; got != run.BackupRef {
+	if got := snapshot.ExecutionBundles[0].BackupRef; got != managementstate.BackupArtifactID(run.BackupRef) {
 		t.Fatalf("persisted backup ref=%q want=%q", got, run.BackupRef)
 	}
 }
