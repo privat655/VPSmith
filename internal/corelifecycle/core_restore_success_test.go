@@ -96,7 +96,7 @@ func TestExecuteRestoreStagesRunsValidatesCleansAndReconcilesHistoricalSecrets(t
 	history := &restoreSuccessHistory{}
 	executor, err := execution.New(target, restoreSuccessSecrets{}, history, execution.Options{
 		PollInterval: time.Microsecond,
-		NewRunID: func() (string, error) { return "run_restore_success", nil },
+		NewRunID:     func() (string, error) { return "run_restore_success", nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -187,10 +187,10 @@ func coreRestoreSuccessArchive(t *testing.T, observed managementstate.ObservedSt
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"var/lib/vpsmith/core/desired.json":                lockBytes,
-		"var/lib/vpsmith/core/authelia/data/state.db":      []byte("historical-authelia-state"),
-		"var/lib/vpsmith/inventory/core.json":              []byte("{}\n"),
-		"var/lib/vpsmith/execution/core/historical-proof":  []byte("{}\n"),
+		"var/lib/vpsmith/core/desired.json":               lockBytes,
+		"var/lib/vpsmith/core/authelia/data/state.db":     []byte("historical-authelia-state"),
+		"var/lib/vpsmith/inventory/core.json":             []byte("{}\n"),
+		"var/lib/vpsmith/execution/core/historical-proof": []byte("{}\n"),
 	}
 	for _, id := range refs.IDs() {
 		files["var/lib/vpsmith/secrets/core/"+string(id)] = values[id]
