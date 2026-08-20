@@ -131,6 +131,7 @@ func (l *Lifecycle) reconcileRestoredCoreSecrets(ctx context.Context, candidateR
 			for i := range value {
 				value[i] = 0
 			}
+		}
 	}()
 	for _, id := range ids {
 		name := string(id)
