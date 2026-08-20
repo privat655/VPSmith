@@ -44,7 +44,7 @@ func main() {
 
 	if *check {
 		if !bytes.Equal(data, encoded) {
-			fatalf("%s is stale; run build/update-embedded-manifest.sh", *manifest)
+			fatalf("%s is stale; run build/update-embedded-manifest.sh; expected:\n%s", *manifest, encoded)
 		}
 		if _, err := releaseinfo.Load(*root); err != nil {
 			fatalf("verify manifest: %v", err)
