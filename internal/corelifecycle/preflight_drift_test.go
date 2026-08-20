@@ -49,6 +49,22 @@ func TestRequireSteadyCoreBeforeMutationRejectsEffectiveDrift(t *testing.T) {
 	}
 }
 
+func TestRequireSteadyCoreBeforeMutationRejectsSourceCatalogVersionMismatch(t *testing.T) {
+	_, observed := validCorePostState()
+	snapshot := managementstate.Snapshot{Sources: managementstate.SourceState{Artifacts: []managementstate.SourceArtifact{{
+		ID: "core-source", Kind: managementstate.SourceCore, Version: "0.9.0", SHA256: strings.Repeat("a", 64),
+	}}}}
+	target := managementstate.Target{Desired: managementstate.DesiredState{Core: managementstate.CoreDesiredState{
+		SourceID: "core-source", Version: "1.0.0", CoreContract: "1",
+		Swap: managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
+	}}}
+
+	err := requireSteadyCoreBeforeMutation(snapshot, target, observed, deployment.Update)
+	if err == nil || !strings.Contains(err.Error(), "source version") {
+		t.Fatalf("Core source catalog version mismatch error=%v", err)
+	}
+}
+
 func TestRequireSteadyCoreBeforeMutationDoesNotBlockRecoveryRestore(t *testing.T) {
 	_, observed := validCorePostState()
 	observed.Core.Running = false
