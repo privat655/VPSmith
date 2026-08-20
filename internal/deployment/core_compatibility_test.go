@@ -66,8 +66,8 @@ actions:
   validate: actions/validate.sh
 update_from: {}
 uninstall:
-  delete_persistent_data: false
-  delete_secrets: false
+  delete_persistent_data: true
+  delete_secrets: true
 `
 	return fstest.MapFS{
 		"module.yaml":         &fstest.MapFile{Data: []byte(yaml)},
