@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 
 	"github.com/privat655/VPSmith/internal/backuprestore"
 	"github.com/privat655/VPSmith/internal/deployment"
@@ -26,8 +27,8 @@ type RestoreExecutionRequest struct {
 	Passphrase []byte
 }
 
-// ExecuteRestore is the only complete Core restore execution path. It reopens
-// the approved catalogued backup after plan approval, verifies that those exact
+// ExecuteRestore is the complete Core restore execution path. It reopens the
+// approved catalogued backup after plan approval, verifies that those exact
 // bytes still match the prepared Core identity and image locks, streams the
 // verified payload through the existing strict-SSH target adapter, and then
 // executes the already compiled immutable restore bundle.
@@ -68,8 +69,12 @@ func (l *Lifecycle) ExecuteRestore(ctx context.Context, prepared Prepared, req R
 
 	run, executeErr := l.Execute(ctx, prepared)
 	cleanupErr := storage.CleanupCoreRestorePayload(context.WithoutCancel(ctx), string(prepared.TargetID), prepared.Operation.Bundle.ID)
-	if executeErr != nil || cleanupErr != nil {
+	if executeErr != nil {
 		return run, errors.Join(executeErr, cleanupErr)
+	}
+	secretErr := l.reconcileRestoredCoreSecrets(ctx, restore.CandidateRoot, prepared.DesiredCore.Secrets)
+	if secretErr != nil || cleanupErr != nil {
+		return run, errors.Join(secretErr, cleanupErr)
 	}
 	return run, nil
 }
@@ -114,6 +119,42 @@ func validatePreparedRestoreArtifact(prepared Prepared, backupID managementstate
 		if locks.Images[name] != bundleImages[name] {
 			return fmt.Errorf("Core restore %s image identity no longer matches the approved plan", name)
 		}
+	}
+	return nil
+}
+
+func (l *Lifecycle) reconcileRestoredCoreSecrets(ctx context.Context, candidateRoot string, refs managementstate.CoreSecretReferences) error {
+	ids := refs.IDs()
+	values := make(map[managementstate.SecretID][]byte, len(ids))
+	defer func() {
+		for _, value := range values {
+			for i := range value {
+				value[i] = 0
+			}
+	}()
+	for _, id := range ids {
+		name := string(id)
+		if name == "" || filepath.Base(name) != name || strings.ContainsAny(name, "/\\\x00\r\n") {
+			return errors.New("restored Core secret reference is not a safe file identity")
+		}
+		value, err := os.ReadFile(filepath.Join(candidateRoot, "var", "lib", "vpsmith", "secrets", "core", name))
+		if err != nil {
+			return fmt.Errorf("read restored Core secret %s: %w", id, err)
+		}
+		if len(value) == 0 {
+			return fmt.Errorf("restored Core secret %s is empty", id)
+		}
+		values[id] = value
+	}
+	if err := l.state.Change(ctx, func(change *managementstate.Change) error {
+		for _, id := range ids {
+			if err := change.RotateSecret(id, values[id]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("reconcile restored Core secrets in Management State: %w", err)
 	}
 	return nil
 }
