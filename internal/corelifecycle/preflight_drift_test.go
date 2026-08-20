@@ -31,7 +31,10 @@ func TestRequireSteadyCoreBeforeMutationRejectsEffectiveDrift(t *testing.T) {
 		{"source", func(v *managementstate.ObservedState) { v.Core.SourceID = "other" }, "identity drift"},
 		{"secondary", func(v *managementstate.ObservedState) { v.Host.SecondaryHardening.AuditdActive = false }, "Secondary Host Hardening"},
 		{"runtime", func(v *managementstate.ObservedState) { v.Core.Caddy.Running = false }, "runtime"},
-		{"listener", func(v *managementstate.ObservedState) { v.Host.Listeners[2].Public = true; v.Host.Listeners[2].Loopback = false }, "listener"},
+		{"listener", func(v *managementstate.ObservedState) {
+			v.Host.Listeners[2].Public = true
+			v.Host.Listeners[2].Loopback = false
+		}, "listener"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
