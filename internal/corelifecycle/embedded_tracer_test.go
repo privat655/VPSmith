@@ -35,7 +35,7 @@ func (embeddedTracerRegistry) Resolve(_ context.Context, ref string) (string, er
 type embeddedTracerTarget struct{}
 
 func (embeddedTracerTarget) Upload(context.Context, string, executionbundle.Bundle) error { return nil }
-func (embeddedTracerTarget) Start(context.Context, string, execution.StartRequest) error { return nil }
+func (embeddedTracerTarget) Start(context.Context, string, execution.StartRequest) error  { return nil }
 func (embeddedTracerTarget) Observe(context.Context, string, string) (execution.Observation, error) {
 	return execution.Observation{}, nil
 }
@@ -50,7 +50,9 @@ func (embeddedTracerSecrets) Resolve(context.Context, string, func([]byte) error
 type embeddedTracerHistory struct{}
 
 func (embeddedTracerHistory) RegisterBundle(context.Context, execution.Run) error { return nil }
-func (embeddedTracerHistory) Finished(context.Context, execution.Run, execution.Proof) error { return nil }
+func (embeddedTracerHistory) Finished(context.Context, execution.Run, execution.Proof) error {
+	return nil
+}
 
 func TestEmbeddedCorePreparesInstallThroughCanonicalLifecycle(t *testing.T) {
 	t.Parallel()
