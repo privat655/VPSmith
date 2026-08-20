@@ -200,19 +200,35 @@ safe_swapoff() {
   sudo swapoff "$target"
 }
 
+active_swap_count() {
+  swapon --show=NAME --noheadings | awk 'NF {count++} END {print count+0}'
+}
+
+active_swap_name() {
+  swapon --show=NAME --noheadings | awk 'NF {$1=$1; print; exit}'
+}
+
 core_swap_active() {
-  swapon --show=NAME --noheadings | awk '{$1=$1; print}' | grep -Fxq "$CORE_SWAP"
+  [ "$(active_swap_name)" = "$CORE_SWAP" ]
 }
 
 foreign_swap_active() {
-  swapon --show=NAME --noheadings | awk '{$1=$1; print}' | grep -Fvx "$CORE_SWAP" | grep -q .
+  local active
+  active=$(active_swap_name)
+  [ -n "$active" ] && [ "$active" != "$CORE_SWAP" ]
 }
 
-write_core_fstab() {
+require_swap_v1_runtime() {
+  local count
+  count=$(active_swap_count)
+  [ "$count" -le 1 ] || { echo "Swap V1 supports at most one active swap device" >&2; return 1; }
+}
+
+write_swap_fstab() {
   local enable=$1
   local tmp
   tmp=$(mktemp)
-  sudo awk -v p="$CORE_SWAP" '$1 != p {print}' /etc/fstab >"$tmp"
+  sudo awk '$3 != "swap" {print}' /etc/fstab >"$tmp"
   if [ "$enable" = yes ]; then
     printf '%s none swap sw 0 0\n' "$CORE_SWAP" >>"$tmp"
   fi
@@ -221,40 +237,42 @@ write_core_fstab() {
 }
 
 apply_swap() {
-  local mode size
+  local mode size active
   mode=$(core_json swap_mode)
   size=$(core_json effective_swap_bytes)
+  require_swap_v1_runtime
+  active=$(active_swap_name)
+
   case "$mode" in
     preserve-existing)
-      [ -z "$size" ] || [ "$size" = 0 ]
-      foreign_swap_active || { echo "preserve-existing requires active foreign swap" >&2; return 1; }
-      core_swap_active && { echo "preserve-existing cannot keep a VPSmith swapfile" >&2; return 1; }
+      [ "$size" = 0 ]
+      [ -n "$active" ] || { echo "preserve-existing requires active foreign swap" >&2; return 1; }
+      [ "$active" != "$CORE_SWAP" ] || { echo "preserve-existing cannot keep a VPSmith swapfile" >&2; return 1; }
       ;;
     none)
-      if core_swap_active; then
-        safe_swapoff "$CORE_SWAP"
+      if [ -n "$active" ]; then
+        safe_swapoff "$active"
       fi
-      write_core_fstab no
+      write_swap_fstab no
       sudo rm -f "$CORE_SWAP"
-      if foreign_swap_active; then
-        echo "foreign swap is active; disabling foreign swap requires explicit observed ownership support" >&2
-        return 1
-      fi
+      [ "$(active_swap_count)" -eq 0 ] || { echo "swap remains active after disabling it" >&2; return 1; }
       ;;
     swapfile)
       [ "$size" -gt 0 ] || { echo "swapfile requires resolved positive size" >&2; return 1; }
-      if foreign_swap_active; then
-        echo "foreign swap replacement requires explicit observed ownership support" >&2
-        return 1
-      fi
-      if core_swap_active; then
-        local current
-        current=$(stat -c %s "$CORE_SWAP")
-        if [ "$current" -ne "$size" ]; then
-          safe_swapoff "$CORE_SWAP"
+      if [ -n "$active" ]; then
+        if [ "$active" != "$CORE_SWAP" ]; then
+          safe_swapoff "$active"
+          active=""
+        else
+          local current
+          current=$(stat -c %s "$CORE_SWAP")
+          if [ "$current" -ne "$size" ]; then
+            safe_swapoff "$CORE_SWAP"
+            active=""
+          fi
         fi
       fi
-      if ! core_swap_active; then
+      if [ -z "$active" ]; then
         sudo install -d -o root -g root -m 0750 /var/lib/vpsmith
         sudo rm -f "$CORE_SWAP"
         sudo fallocate -l "$size" "$CORE_SWAP"
@@ -262,7 +280,8 @@ apply_swap() {
         sudo mkswap "$CORE_SWAP" >/dev/null
         sudo swapon "$CORE_SWAP"
       fi
-      write_core_fstab yes
+      write_swap_fstab yes
+      [ "$(active_swap_count)" -eq 1 ] && core_swap_active || { echo "Core swapfile is not the only active swap device" >&2; return 1; }
       ;;
     *)
       echo "unsupported Core swap mode: $mode" >&2
