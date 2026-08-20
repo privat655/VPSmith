@@ -344,14 +344,28 @@ func corePlan(operation OperationKind) []PlanStep {
 }
 
 func coreActions(source fs.FS, operation OperationKind) ([]executionbundle.File, []string, error) {
+	runtimeName := "actions/runtime.sh"
+	runtime, err := fs.ReadFile(source, runtimeName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Core package missing %s: %w", runtimeName, err)
+	}
+	if len(runtime) == 0 {
+		return nil, nil, errors.New("Core shared runtime action is empty")
+	}
 	name := "actions/" + string(operation) + ".sh"
-	data, err := fs.ReadFile(source, name)
+	entrypoint, err := fs.ReadFile(source, name)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Core package missing %s: %w", name, err)
 	}
-	if len(data) == 0 {
+	if len(entrypoint) == 0 {
 		return nil, nil, fmt.Errorf("Core action %s is empty", name)
 	}
+	data := make([]byte, 0, len(runtime)+len(entrypoint)+1)
+	data = append(data, runtime...)
+	if runtime[len(runtime)-1] != '\n' {
+		data = append(data, '\n')
+	}
+	data = append(data, entrypoint...)
 	return []executionbundle.File{{Path: name, Mode: 0o500, Data: data}}, []string{"core-" + string(operation)}, nil
 }
 
