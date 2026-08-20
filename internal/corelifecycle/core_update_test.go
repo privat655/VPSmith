@@ -110,6 +110,13 @@ func TestPrepareUpdateWithBackupRejectsCallerSelectedBackup(t *testing.T) {
 func installUpdateTestSecrets(t *testing.T, lifecycle *Lifecycle, targetID managementstate.TargetID) managementstate.CoreSecretReferences {
 	t.Helper()
 	ctx := context.Background()
+	inspector := lifecycle.inspector.(coreBackupTestInspector)
+	inspector.observed.Host.OSID = "ubuntu"
+	inspector.observed.Host.OSVersion = "24.04"
+	inspector.observed.Host.Kernel = "6.8.0-test"
+	inspector.observed.Host.RootFilesystem = managementstate.FilesystemObservedState{TotalBytes: 40 << 30, AvailableBytes: 30 << 30}
+	lifecycle.inspector = inspector
+
 	snapshot, err := lifecycle.state.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
