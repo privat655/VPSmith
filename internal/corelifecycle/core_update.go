@@ -40,9 +40,6 @@ type PreparedUpdate struct {
 // verifies the mandatory immediate Core backup, then compiles the update from
 // that same pinned source snapshot. A caller cannot substitute an older backup.
 func (l *Lifecycle) PrepareUpdateWithBackup(ctx context.Context, req PrepareRequest) (PreparedUpdate, error) {
-	if l == nil || l.state == nil || l.sources == nil || l.inspector == nil || l.compiler == nil || l.backups == nil || l.storage == nil {
-		return PreparedUpdate{}, errors.New("complete Core update lifecycle is required")
-	}
 	if req.TargetID == "" {
 		return PreparedUpdate{}, errors.New("target id is required")
 	}
@@ -51,6 +48,9 @@ func (l *Lifecycle) PrepareUpdateWithBackup(ctx context.Context, req PrepareRequ
 	}
 	if len(req.BackupPassphrase) == 0 {
 		return PreparedUpdate{}, errors.New("Core update requires the recovery passphrase for its immediate backup")
+	}
+	if l == nil || l.state == nil || l.sources == nil || l.inspector == nil || l.compiler == nil || l.backups == nil || l.storage == nil {
+		return PreparedUpdate{}, errors.New("complete Core update lifecycle is required")
 	}
 
 	frozen, err := l.preflightUpdateCandidate(ctx, req)
