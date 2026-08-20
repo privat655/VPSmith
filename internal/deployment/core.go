@@ -37,13 +37,20 @@ type CoreRequest struct {
 	BackupRequired     bool
 }
 
+type generatedCoreImage struct {
+	Ref    string `json:"ref"`
+	Digest string `json:"digest"`
+}
+
 type generatedCoreDesired struct {
-	SourceID           string `json:"source_id"`
-	Version            string `json:"version"`
-	PackageSHA256      string `json:"package_sha256"`
-	SwapMode           string `json:"swap_mode"`
-	SwapSizeGiB        int    `json:"swap_size_gib,omitempty"`
-	EffectiveSwapBytes int64  `json:"effective_swap_bytes,omitempty"`
+	SourceID           string                        `json:"source_id"`
+	Version            string                        `json:"version"`
+	PackageSHA256      string                        `json:"package_sha256"`
+	CoreContract       string                        `json:"core_contract"`
+	Images             map[string]generatedCoreImage `json:"images"`
+	SwapMode           string                        `json:"swap_mode"`
+	SwapSizeGiB        int                           `json:"swap_size_gib,omitempty"`
+	EffectiveSwapBytes int64                         `json:"effective_swap_bytes,omitempty"`
 }
 
 // PrepareCore freezes one Core candidate into the same immutable execution
@@ -53,7 +60,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 	if err := ctx.Err(); err != nil {
 		return PreparedOperation{}, err
 	}
-	if c == nil || c.bundles == nil {
+	if c == nil || c.bundles == nil || c.registry == nil {
 		return PreparedOperation{}, errors.New("deployment compiler is required")
 	}
 	if req.Operation != Install && req.Operation != Update && req.Operation != Reconfigure && req.Operation != Restore && req.Operation != Validate {
@@ -75,6 +82,14 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 		return PreparedOperation{}, err
 	}
 
+	definition, err := compileCoreDefinition(req.Source.PackageFS, req.Source.Version)
+	if err != nil {
+		return PreparedOperation{}, err
+	}
+	imageIDs, imageDigests, err := c.resolveCoreImages(ctx, definition)
+	if err != nil {
+		return PreparedOperation{}, err
+	}
 	actions, actionIDs, err := coreActions(req.Source.PackageFS, req.Operation)
 	if err != nil {
 		return PreparedOperation{}, err
@@ -82,7 +97,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 	artifacts := []GeneratedArtifact{}
 	files := []executionbundle.File{}
 	if req.Operation != Validate {
-		desired, err := generateCoreDesired(req)
+		desired, err := generateCoreDesired(req, definition, imageIDs)
 		if err != nil {
 			return PreparedOperation{}, err
 		}
@@ -120,6 +135,8 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 		"core_source_id":      req.Source.SourceID,
 		"core_version":        req.Source.Version,
 		"core_package_sha256": req.Source.PackageSHA256,
+		"core_contract":       definition.CoreContract,
+		"image_digests":       imageDigests,
 		"artifacts":           artifactPostState(artifacts),
 	}
 	bundleKind := executionbundle.Migration
@@ -139,6 +156,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 		PackageSHA256:   req.Source.PackageSHA256,
 		Version:         req.Source.Version,
 		Sources:         []executionbundle.SourceIdentity{sourceIdentity},
+		Images:          imageIDs,
 		Files:           files,
 		Actions:         actions,
 		ActionIDs:       actionIDs,
@@ -163,7 +181,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 			GitCommit:     req.Source.GitCommit,
 			PackageSHA256: req.Source.PackageSHA256,
 		}},
-		ImageDigests:  map[string]string{},
+		ImageDigests:  imageDigests,
 		Artifacts:     artifacts,
 		Preconditions: preconditions,
 		ExpectedPost:  post,
@@ -172,11 +190,17 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 	}, nil
 }
 
-func generateCoreDesired(req CoreRequest) (GeneratedArtifact, error) {
+func generateCoreDesired(req CoreRequest, definition coreDefinition, images []executionbundle.ImageIdentity) (GeneratedArtifact, error) {
+	resolved := make(map[string]generatedCoreImage, len(images))
+	for _, image := range images {
+		resolved[image.Name] = generatedCoreImage{Ref: image.Ref, Digest: image.Digest}
+	}
 	data, err := json.Marshal(generatedCoreDesired{
 		SourceID:           req.Source.SourceID,
 		Version:            req.Source.Version,
 		PackageSHA256:      req.Source.PackageSHA256,
+		CoreContract:       definition.CoreContract,
+		Images:             resolved,
 		SwapMode:           req.SwapMode,
 		SwapSizeGiB:        req.SwapSizeGiB,
 		EffectiveSwapBytes: req.EffectiveSwapBytes,
