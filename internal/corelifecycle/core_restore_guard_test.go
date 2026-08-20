@@ -43,7 +43,7 @@ func TestGenericExecuteRejectsRestoreBeforeRunner(t *testing.T) {
 	}
 
 	_, err = lifecycle.Execute(ctx, prepared)
-	if err == nil || !strings.Contains(err.Error(), "ExecuteRestore") {
+	if err == nil || !strings.Contains(err.Error(), "ExecuteVerifiedCoreRestore") {
 		t.Fatalf("generic restore execution error=%v", err)
 	}
 	if target.starts != 0 || history.started != 0 || history.finished != 0 {
