@@ -110,12 +110,12 @@ func TestPrepareCoreRestoreUsesBackedUpImageLocksInsteadOfRegistryResolution(t *
 	req := coreRequest(Restore)
 	req.ObservedCoreID = "source-core-newer"
 	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
-	req.FrozenImages = map[string]FrozenCoreImage{
+	locks := map[string]FrozenCoreImage{
 		"caddy":    {Ref: caddyTestRef, Digest: "sha256:" + strings.Repeat("d", 64)},
 		"authelia": {Ref: autheliaTestRef, Digest: "sha256:" + strings.Repeat("e", 64)},
 	}
 
-	prepared, err := compiler.PrepareCore(context.Background(), req)
+	prepared, err := compiler.PrepareCoreRestore(context.Background(), req, locks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,22 +123,29 @@ func TestPrepareCoreRestoreUsesBackedUpImageLocksInsteadOfRegistryResolution(t *
 	for _, image := range prepared.Bundle.Manifest.Images {
 		got[image.Name] = image.Digest
 	}
-	if got["caddy"] != req.FrozenImages["caddy"].Digest || got["authelia"] != req.FrozenImages["authelia"].Digest {
+	if got["caddy"] != locks["caddy"].Digest || got["authelia"] != locks["authelia"].Digest {
 		t.Fatalf("restore did not preserve backed-up image locks: %#v", got)
 	}
 }
 
-func TestPrepareCoreRejectsFrozenImageLocksOutsideRestore(t *testing.T) {
+func TestPrepareCoreRestoreRejectsImageLockRefDriftAndNonRestoreUse(t *testing.T) {
 	compiler := coreCompiler(t)
-	req := coreRequest(Update)
-	req.ObservedCoreID = "source-core-old"
-	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
-	req.BackupRequired = true
-	req.FrozenImages = map[string]FrozenCoreImage{
-		"caddy":    {Ref: caddyTestRef, Digest: "sha256:" + strings.Repeat("d", 64)},
+	locks := map[string]FrozenCoreImage{
+		"caddy":    {Ref: "docker.io/library/caddy:moved", Digest: "sha256:" + strings.Repeat("d", 64)},
 		"authelia": {Ref: autheliaTestRef, Digest: "sha256:" + strings.Repeat("e", 64)},
 	}
-	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
+	restore := coreRequest(Restore)
+	restore.ObservedCoreID = "source-core-newer"
+	restore.ObservedCoreSHA256 = strings.Repeat("b", 64)
+	if _, err := compiler.PrepareCoreRestore(context.Background(), restore, locks); err == nil {
+		t.Fatal("Core restore accepted image lock ref drift from frozen Core package")
+	}
+
+	update := coreRequest(Update)
+	update.ObservedCoreID = "source-core-old"
+	update.ObservedCoreSHA256 = strings.Repeat("b", 64)
+	update.BackupRequired = true
+	if _, err := compiler.PrepareCoreRestore(context.Background(), update, locks); err == nil {
 		t.Fatal("non-restore Core operation accepted backed-up image locks")
 	}
 }
