@@ -190,6 +190,13 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 	case Validate:
 		bundleKind = executionbundle.Validation
 	}
+	bundleSecrets := coreBundleSecrets(req.Secrets)
+	if req.Operation == Restore {
+		// Restore gets the backed-up values from the verified restore payload.
+		// Stable secret IDs remain in generated desired state, but current
+		// Management State values must not overwrite historical restore data.
+		bundleSecrets = nil
+	}
 	sourceIdentity := executionbundle.SourceIdentity{Kind: "core", ID: req.Source.SourceID, Version: req.Source.Version, GitCommit: req.Source.GitCommit, PackageSHA256: req.Source.PackageSHA256}
 	bundle, err := c.bundles.Assemble(executionbundle.Input{
 		Kind:            bundleKind,
@@ -204,7 +211,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 		Files:           files,
 		Actions:         actions,
 		ActionIDs:       actionIDs,
-		Secrets:         coreBundleSecrets(req.Secrets),
+		Secrets:         bundleSecrets,
 		Preconditions:   preconditions,
 		ExpectedPost:    post,
 		Validations:     validations,
