@@ -29,7 +29,6 @@ func generateCoreArtifacts(req CoreRequest, definition coreDefinition, images []
 	if !ok {
 		return nil, fmt.Errorf("resolved Core image authelia is missing")
 	}
-
 	quadletRoot := filepath.Join("/home", req.AdminUser, ".config/containers/systemd")
 	artifacts := []GeneratedArtifact{
 		desired,
@@ -85,7 +84,6 @@ WantedBy=default.target
 		textArtifact("generated/authelia.container", filepath.Join(quadletRoot, "authelia.container"), 0o640, autheliaQuadlet(req, authelia)),
 		textArtifact("generated/caddy.container", filepath.Join(quadletRoot, "caddy.container"), 0o640, caddyQuadlet(req, caddy)),
 	}
-
 	inventory, err := coreInventoryArtifact(req, artifacts)
 	if err != nil {
 		return nil, err
@@ -374,28 +372,25 @@ WantedBy=default.target
 }
 
 type generatedCoreInventory struct {
-	SourceID         string                   `json:"source_id"`
-	Version          string                   `json:"version"`
-	PackageSHA256    string                   `json:"package_sha256"`
-	Units            []generatedCoreUnit      `json:"units"`
-	Containers       []string                 `json:"containers"`
-	Networks         []string                 `json:"networks"`
-	Caddy            generatedCoreCaddy       `json:"caddy"`
-	Authelia         generatedCoreService     `json:"authelia"`
-	ManagedArtifacts []string                 `json:"managed_artifacts"`
+	SourceID         string               `json:"source_id"`
+	Version          string               `json:"version"`
+	PackageSHA256    string               `json:"package_sha256"`
+	Units            []generatedCoreUnit  `json:"units"`
+	Containers       []string             `json:"containers"`
+	Networks         []string             `json:"networks"`
+	Caddy            generatedCoreCaddy   `json:"caddy"`
+	Authelia         generatedCoreService `json:"authelia"`
+	ManagedArtifacts []string             `json:"managed_artifacts"`
 }
-
 type generatedCoreUnit struct {
 	Name  string `json:"name"`
 	Scope string `json:"scope"`
 }
-
 type generatedCoreCaddy struct {
 	Unit       generatedCoreUnit `json:"unit"`
 	Container  string            `json:"container"`
 	ConfigPath string            `json:"config_path"`
 }
-
 type generatedCoreService struct {
 	Unit      generatedCoreUnit `json:"unit"`
 	Container string            `json:"container"`
@@ -408,22 +403,11 @@ func coreInventoryArtifact(req CoreRequest, artifacts []GeneratedArtifact) (Gene
 	}
 	sort.Strings(managed)
 	inventory := generatedCoreInventory{
-		SourceID:      req.Source.SourceID,
-		Version:       req.Source.Version,
-		PackageSHA256: req.Source.PackageSHA256,
-		Units: []generatedCoreUnit{
-			{Name: "caddy-edge-http.socket", Scope: "system"},
-			{Name: "caddy-edge-https.socket", Scope: "system"},
-			{Name: "authelia.service", Scope: "user"},
-			{Name: "caddy.service", Scope: "user"},
-		},
-		Containers: []string{"authelia", "caddy"},
-		Networks:   []string{"vpsmith_core", "vpsmith_egress"},
-		Caddy: generatedCoreCaddy{
-			Unit: generatedCoreUnit{Name: "caddy.service", Scope: "user"}, Container: "caddy", ConfigPath: "/var/lib/vpsmith/core/caddy/Caddyfile",
-		},
-		Authelia:         generatedCoreService{Unit: generatedCoreUnit{Name: "authelia.service", Scope: "user"}, Container: "authelia"},
-		ManagedArtifacts: managed,
+		SourceID: req.Source.SourceID, Version: req.Source.Version, PackageSHA256: req.Source.PackageSHA256,
+		Units:      []generatedCoreUnit{{Name: "caddy-edge-http.socket", Scope: "system"}, {Name: "caddy-edge-https.socket", Scope: "system"}, {Name: "authelia.service", Scope: "user"}, {Name: "caddy.service", Scope: "user"}},
+		Containers: []string{"authelia", "caddy"}, Networks: []string{"vpsmith_core", "vpsmith_egress"},
+		Caddy:    generatedCoreCaddy{Unit: generatedCoreUnit{Name: "caddy.service", Scope: "user"}, Container: "caddy", ConfigPath: "/var/lib/vpsmith/core/caddy/Caddyfile"},
+		Authelia: generatedCoreService{Unit: generatedCoreUnit{Name: "authelia.service", Scope: "user"}, Container: "authelia"}, ManagedArtifacts: managed,
 	}
 	data, err := json.MarshalIndent(inventory, "", "  ")
 	if err != nil {
