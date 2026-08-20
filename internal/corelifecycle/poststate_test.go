@@ -57,12 +57,14 @@ func TestCorePostValidationEnforcesAllSwapModes(t *testing.T) {
 	}
 
 	prepared.DesiredCore.Swap = managementstate.SwapDesiredState{Mode: "preserve-existing"}
+	prepared.SwapBefore = []managementstate.SwapDeviceObservedState{{Path: "/dev/vdb", Kind: "partition", SizeBytes: 1 << 30, Priority: -2}}
+	observed.Host.SwapDevices = []managementstate.SwapDeviceObservedState{{Path: "/dev/vdb", Kind: "partition", SizeBytes: 1 << 30, Priority: -2}}
 	if err := validatePostState(prepared, observed); err != nil {
-		t.Fatalf("preserve-existing rejected one foreign swap: %v", err)
+		t.Fatalf("preserve-existing rejected unchanged foreign swap: %v", err)
 	}
-	observed.Host.SwapDevices[0].CoreManaged = true
+	observed.Host.SwapDevices[0].Priority = -3
 	if err := validatePostState(prepared, observed); err == nil {
-		t.Fatal("preserve-existing accepted Core-managed swap")
+		t.Fatal("preserve-existing accepted changed foreign swap identity")
 	}
 }
 
@@ -93,6 +95,7 @@ func validCorePostState() (Prepared, managementstate.ObservedState) {
 	observed := managementstate.ObservedState{
 		Host: managementstate.HostObservedState{
 			Reachable: true, SSH: true, PrimaryHardening: primary, SecondaryHardening: secondary,
+			Memory:      managementstate.MemoryObservedState{TotalBytes: 8 << 30, AvailableBytes: 4 << 30},
 			SwapDevices: []managementstate.SwapDeviceObservedState{{Path: "/var/lib/vpsmith/swapfile", Kind: "file", SizeBytes: 2 << 30, CoreManaged: true}},
 			Listeners: []managementstate.ListenerObservedState{
 				{Address: "0.0.0.0", Port: 80, Public: true, Protocol: "tcp"},
