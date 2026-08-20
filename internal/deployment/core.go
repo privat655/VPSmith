@@ -140,12 +140,13 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 	artifacts := []GeneratedArtifact{}
 	files := []executionbundle.File{}
 	if req.Operation != Validate {
-		desired, err := generateCoreDesired(req, definition, imageIDs)
+		artifacts, err = generateCoreArtifacts(req, definition, imageIDs)
 		if err != nil {
 			return PreparedCoreOperation{}, err
 		}
-		artifacts = append(artifacts, desired)
-		files = append(files, executionbundle.File{Path: desired.Path, TargetPath: desired.TargetPath, Mode: desired.Mode, Data: desired.Data})
+		for _, generated := range artifacts {
+			files = append(files, executionbundle.File{Path: generated.Path, TargetPath: generated.TargetPath, Mode: generated.Mode, Data: generated.Data})
+		}
 	}
 
 	preconditions := []executionbundle.Precondition{{Kind: "target", Subject: req.TargetID, Expected: "same-target"}}
@@ -155,19 +156,19 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 			executionbundle.Precondition{Kind: "core-package-sha256", Subject: "installed", Expected: req.ObservedCoreSHA256},
 		)
 	}
-	for _, artifact := range artifacts {
-		if current := req.ObservedArtifacts[artifact.TargetPath]; current != "" {
+	for _, generated := range artifacts {
+		if current := req.ObservedArtifacts[generated.TargetPath]; current != "" {
 			if !validSHA256(current) {
-				return PreparedCoreOperation{}, fmt.Errorf("invalid observed artifact sha256 for %s", artifact.TargetPath)
+				return PreparedCoreOperation{}, fmt.Errorf("invalid observed artifact sha256 for %s", generated.TargetPath)
 			}
-			preconditions = append(preconditions, executionbundle.Precondition{Kind: "artifact-sha256", Subject: artifact.TargetPath, Expected: current})
+			preconditions = append(preconditions, executionbundle.Precondition{Kind: "artifact-sha256", Subject: generated.TargetPath, Expected: current})
 		}
 	}
 
 	plan := corePlan(req.Operation)
 	steps := make([]executionbundle.Step, 0, len(artifacts)+len(actions))
-	for _, artifact := range artifacts {
-		steps = append(steps, executionbundle.Step{ID: "apply-core-desired", Kind: "apply-artifact", Artifact: artifact.Path, Mutating: true})
+	for i, generated := range artifacts {
+		steps = append(steps, executionbundle.Step{ID: fmt.Sprintf("apply-core-artifact-%03d", i+1), Kind: "apply-artifact", Artifact: generated.Path, Mutating: true})
 	}
 	for _, id := range actionIDs {
 		steps = append(steps, executionbundle.Step{ID: id, Kind: "action", Action: id, Mutating: req.Operation != Validate})
