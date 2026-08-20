@@ -18,6 +18,21 @@ type moduleCompatibilityChecker interface {
 	CheckCoreCompatibility(string, []deployment.FrozenModuleSource) error
 }
 
+func requireLifecycleModuleCompatibility(ctx context.Context, snapshot managementstate.Snapshot, target managementstate.Target, observed managementstate.ObservedState, coreContract string, sources Sources, compiler Compiler) error {
+	if len(target.Desired.Modules) == 0 {
+		return nil
+	}
+	moduleSources, ok := sources.(moduleSnapshotSource)
+	if !ok {
+		return errors.New("Source Library does not expose immutable module snapshots for Core compatibility")
+	}
+	checker, ok := compiler.(moduleCompatibilityChecker)
+	if !ok {
+		return errors.New("Deployment Compiler does not expose Core compatibility checking")
+	}
+	return requireInstalledModulesCompatible(ctx, snapshot, target, observed, coreContract, moduleSources, checker)
+}
+
 func requireInstalledModulesCompatible(ctx context.Context, snapshot managementstate.Snapshot, target managementstate.Target, observed managementstate.ObservedState, coreContract string, sources moduleSnapshotSource, checker moduleCompatibilityChecker) error {
 	if len(target.Desired.Modules) == 0 {
 		return nil
