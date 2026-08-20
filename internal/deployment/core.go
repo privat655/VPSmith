@@ -57,6 +57,7 @@ type CoreRequest struct {
 	SwapSizeGiB        int
 	EffectiveSwapBytes int64
 	BackupRequired     bool
+	BackupRef          string
 }
 
 // PreparedCoreOperation keeps the Core-specific contract result behind the
@@ -118,8 +119,12 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 	if req.Operation != Install && (req.ObservedCoreID == "" || !validSHA256(req.ObservedCoreSHA256)) {
 		return PreparedCoreOperation{}, errors.New("Core mutation requires the installed exact Core identity")
 	}
-	if req.Operation == Update && !req.BackupRequired {
-		return PreparedCoreOperation{}, errors.New("Core update requires a verified backup precondition")
+	if req.Operation == Update {
+		if !req.BackupRequired || strings.TrimSpace(req.BackupRef) == "" {
+			return PreparedCoreOperation{}, errors.New("Core update requires a concrete verified backup precondition")
+		}
+	} else if req.BackupRef != "" {
+		return PreparedCoreOperation{}, errors.New("Core backup reference is valid only for update")
 	}
 	if err := validateCoreSwap(req.SwapMode, req.SwapSizeGiB, req.EffectiveSwapBytes); err != nil {
 		return PreparedCoreOperation{}, err
@@ -217,6 +222,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 		Validations:     validations,
 		Steps:           steps,
 		BackupRequired:  req.BackupRequired,
+		BackupRef:       req.BackupRef,
 	})
 	if err != nil {
 		return PreparedCoreOperation{}, err
