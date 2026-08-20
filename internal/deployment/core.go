@@ -6,12 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/mail"
+	"regexp"
 	"strings"
 
 	"github.com/privat655/VPSmith/internal/executionbundle"
 )
 
 const coreDesiredTarget = "/var/lib/vpsmith/core/desired.json"
+
+var coreDomainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+var coreAdminUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 
 // FrozenCoreSource is the exact immutable Core package selected by the Source Library.
 type FrozenCoreSource struct {
@@ -22,11 +27,28 @@ type FrozenCoreSource struct {
 	PackageFS     fs.FS
 }
 
+// CoreSecretIDs are stable Management State references. Secret material never
+// crosses the Deployment Compiler seam.
+type CoreSecretIDs struct {
+	AutheliaSession       string
+	AutheliaStorage       string
+	AutheliaResetPassword string
+	AutheliaUsersDatabase string
+}
+
+func (s CoreSecretIDs) complete() bool {
+	return s.AutheliaSession != "" && s.AutheliaStorage != "" && s.AutheliaResetPassword != "" && s.AutheliaUsersDatabase != ""
+}
+
 // CoreRequest contains only frozen facts. Detection belongs to CoreLifecycle
 // and TargetInspector; generation belongs here.
 type CoreRequest struct {
 	Operation          OperationKind
 	TargetID           string
+	AdminUser          string
+	Domain             string
+	ACMEEmail          string
+	Secrets            CoreSecretIDs
 	Source             FrozenCoreSource
 	ObservedCoreID     string
 	ObservedCoreSHA256 string
@@ -37,9 +59,23 @@ type CoreRequest struct {
 	BackupRequired     bool
 }
 
+// PreparedCoreOperation keeps the Core-specific contract result behind the
+// Core compiler seam while embedding the generic immutable operation.
+type PreparedCoreOperation struct {
+	PreparedOperation
+	CoreContract string
+}
+
 type generatedCoreImage struct {
 	Ref    string `json:"ref"`
 	Digest string `json:"digest"`
+}
+
+type generatedCoreSecrets struct {
+	AutheliaSession       string `json:"authelia_session"`
+	AutheliaStorage       string `json:"authelia_storage"`
+	AutheliaResetPassword string `json:"authelia_reset_password"`
+	AutheliaUsersDatabase string `json:"authelia_users_database"`
 }
 
 type generatedCoreDesired struct {
@@ -47,7 +83,11 @@ type generatedCoreDesired struct {
 	Version            string                        `json:"version"`
 	PackageSHA256      string                        `json:"package_sha256"`
 	CoreContract       string                        `json:"core_contract"`
+	AdminUser          string                        `json:"admin_user"`
+	Domain             string                        `json:"domain"`
+	ACMEEmail          string                        `json:"acme_email"`
 	Images             map[string]generatedCoreImage `json:"images"`
+	Secrets            generatedCoreSecrets          `json:"secrets"`
 	SwapMode           string                        `json:"swap_mode"`
 	SwapSizeGiB        int                           `json:"swap_size_gib,omitempty"`
 	EffectiveSwapBytes int64                         `json:"effective_swap_bytes,omitempty"`
@@ -56,50 +96,53 @@ type generatedCoreDesired struct {
 // PrepareCore freezes one Core candidate into the same immutable execution
 // bundle used by all structural VPSmith operations. The target runner stays
 // generic; it never contains a second Core installer.
-func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOperation, error) {
+func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCoreOperation, error) {
 	if err := ctx.Err(); err != nil {
-		return PreparedOperation{}, err
+		return PreparedCoreOperation{}, err
 	}
 	if c == nil || c.bundles == nil || c.registry == nil {
-		return PreparedOperation{}, errors.New("deployment compiler is required")
+		return PreparedCoreOperation{}, errors.New("deployment compiler is required")
 	}
 	if req.Operation != Install && req.Operation != Update && req.Operation != Reconfigure && req.Operation != Restore && req.Operation != Validate {
-		return PreparedOperation{}, errors.New("unsupported Core operation")
+		return PreparedCoreOperation{}, errors.New("unsupported Core operation")
 	}
 	if strings.TrimSpace(req.TargetID) == "" || strings.TrimSpace(req.Source.SourceID) == "" || strings.TrimSpace(req.Source.Version) == "" || !validSHA256(req.Source.PackageSHA256) || req.Source.PackageFS == nil {
-		return PreparedOperation{}, errors.New("complete frozen Core source identity is required")
+		return PreparedCoreOperation{}, errors.New("complete frozen Core source identity is required")
+	}
+	if err := validateCoreConfiguration(req); err != nil {
+		return PreparedCoreOperation{}, err
 	}
 	if req.Operation == Install && (req.ObservedCoreID != "" || req.ObservedCoreSHA256 != "") {
-		return PreparedOperation{}, errors.New("Core install requires Core to be absent")
+		return PreparedCoreOperation{}, errors.New("Core install requires Core to be absent")
 	}
 	if req.Operation != Install && (req.ObservedCoreID == "" || !validSHA256(req.ObservedCoreSHA256)) {
-		return PreparedOperation{}, errors.New("Core mutation requires the installed exact Core identity")
+		return PreparedCoreOperation{}, errors.New("Core mutation requires the installed exact Core identity")
 	}
 	if req.Operation == Update && !req.BackupRequired {
-		return PreparedOperation{}, errors.New("Core update requires a verified backup precondition")
+		return PreparedCoreOperation{}, errors.New("Core update requires a verified backup precondition")
 	}
 	if err := validateCoreSwap(req.SwapMode, req.SwapSizeGiB, req.EffectiveSwapBytes); err != nil {
-		return PreparedOperation{}, err
+		return PreparedCoreOperation{}, err
 	}
 
 	definition, err := compileCoreDefinition(req.Source.PackageFS, req.Source.Version)
 	if err != nil {
-		return PreparedOperation{}, err
+		return PreparedCoreOperation{}, err
 	}
 	imageIDs, imageDigests, err := c.resolveCoreImages(ctx, definition)
 	if err != nil {
-		return PreparedOperation{}, err
+		return PreparedCoreOperation{}, err
 	}
 	actions, actionIDs, err := coreActions(req.Source.PackageFS, req.Operation)
 	if err != nil {
-		return PreparedOperation{}, err
+		return PreparedCoreOperation{}, err
 	}
 	artifacts := []GeneratedArtifact{}
 	files := []executionbundle.File{}
 	if req.Operation != Validate {
 		desired, err := generateCoreDesired(req, definition, imageIDs)
 		if err != nil {
-			return PreparedOperation{}, err
+			return PreparedCoreOperation{}, err
 		}
 		artifacts = append(artifacts, desired)
 		files = append(files, executionbundle.File{Path: desired.Path, TargetPath: desired.TargetPath, Mode: desired.Mode, Data: desired.Data})
@@ -115,7 +158,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 	for _, artifact := range artifacts {
 		if current := req.ObservedArtifacts[artifact.TargetPath]; current != "" {
 			if !validSHA256(current) {
-				return PreparedOperation{}, fmt.Errorf("invalid observed artifact sha256 for %s", artifact.TargetPath)
+				return PreparedCoreOperation{}, fmt.Errorf("invalid observed artifact sha256 for %s", artifact.TargetPath)
 			}
 			preconditions = append(preconditions, executionbundle.Precondition{Kind: "artifact-sha256", Subject: artifact.TargetPath, Expected: current})
 		}
@@ -160,6 +203,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 		Files:           files,
 		Actions:         actions,
 		ActionIDs:       actionIDs,
+		Secrets:         coreBundleSecrets(req.Secrets),
 		Preconditions:   preconditions,
 		ExpectedPost:    post,
 		Validations:     validations,
@@ -167,9 +211,9 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 		BackupRequired:  req.BackupRequired,
 	})
 	if err != nil {
-		return PreparedOperation{}, err
+		return PreparedCoreOperation{}, err
 	}
-	return PreparedOperation{
+	operation := PreparedOperation{
 		Operation:    req.Operation,
 		PlanRequired: req.Operation != Validate,
 		Plan:         plan,
@@ -187,7 +231,50 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 		ExpectedPost:  post,
 		Validations:   validations,
 		Bundle:        bundle,
-	}, nil
+	}
+	return PreparedCoreOperation{PreparedOperation: operation, CoreContract: definition.CoreContract}, nil
+}
+
+func validateCoreConfiguration(req CoreRequest) error {
+	if !coreAdminUser.MatchString(req.AdminUser) {
+		return errors.New("Core requires a valid administrator user")
+	}
+	if err := validateCoreDomain(req.Domain); err != nil {
+		return err
+	}
+	address, err := mail.ParseAddress(req.ACMEEmail)
+	if err != nil || address.Address != req.ACMEEmail || strings.TrimSpace(req.ACMEEmail) == "" {
+		return errors.New("Core requires a valid ACME email address")
+	}
+	if !req.Secrets.complete() {
+		return errors.New("Core requires all Authelia secret references")
+	}
+	return nil
+}
+
+func validateCoreDomain(domain string) error {
+	if domain == "" || domain != strings.ToLower(domain) || len(domain) > 253 || strings.HasSuffix(domain, ".") {
+		return errors.New("Core requires a lowercase ASCII FQDN without trailing dot")
+	}
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return errors.New("Core requires a public FQDN")
+	}
+	for _, label := range labels {
+		if !coreDomainLabel.MatchString(label) {
+			return errors.New("Core domain contains an invalid DNS label")
+		}
+	}
+	return nil
+}
+
+func coreBundleSecrets(ids CoreSecretIDs) []executionbundle.SecretReference {
+	return []executionbundle.SecretReference{
+		{SecretID: ids.AutheliaSession, Container: "core/authelia", Delivery: "file", Target: "/run/secrets/session"},
+		{SecretID: ids.AutheliaStorage, Container: "core/authelia", Delivery: "file", Target: "/run/secrets/storage"},
+		{SecretID: ids.AutheliaResetPassword, Container: "core/authelia", Delivery: "file", Target: "/run/secrets/reset-password"},
+		{SecretID: ids.AutheliaUsersDatabase, Container: "core/authelia", Delivery: "file", Target: "/config/users_database.yml"},
+	}
 }
 
 func generateCoreDesired(req CoreRequest, definition coreDefinition, images []executionbundle.ImageIdentity) (GeneratedArtifact, error) {
@@ -196,11 +283,20 @@ func generateCoreDesired(req CoreRequest, definition coreDefinition, images []ex
 		resolved[image.Name] = generatedCoreImage{Ref: image.Ref, Digest: image.Digest}
 	}
 	data, err := json.Marshal(generatedCoreDesired{
-		SourceID:           req.Source.SourceID,
-		Version:            req.Source.Version,
-		PackageSHA256:      req.Source.PackageSHA256,
-		CoreContract:       definition.CoreContract,
-		Images:             resolved,
+		SourceID:      req.Source.SourceID,
+		Version:       req.Source.Version,
+		PackageSHA256: req.Source.PackageSHA256,
+		CoreContract:  definition.CoreContract,
+		AdminUser:     req.AdminUser,
+		Domain:        req.Domain,
+		ACMEEmail:     req.ACMEEmail,
+		Images:        resolved,
+		Secrets: generatedCoreSecrets{
+			AutheliaSession:       req.Secrets.AutheliaSession,
+			AutheliaStorage:       req.Secrets.AutheliaStorage,
+			AutheliaResetPassword: req.Secrets.AutheliaResetPassword,
+			AutheliaUsersDatabase: req.Secrets.AutheliaUsersDatabase,
+		},
 		SwapMode:           req.SwapMode,
 		SwapSizeGiB:        req.SwapSizeGiB,
 		EffectiveSwapBytes: req.EffectiveSwapBytes,
@@ -235,7 +331,7 @@ func corePlan(operation OperationKind) []PlanStep {
 	return []PlanStep{
 		{ID: "preflight", Description: "Cloud-init und Core-Preconditions prüfen"},
 		{ID: "secondary-hardening", Description: "Secondary Host Hardening anwenden", Mutating: true},
-		{ID: "swap", Description: "gewählte Swap-Konfiguration anwenden", Mutating: true},
+		{ID: "swap", Description: "gewählte Swap-Konfiguration anwenden; Swapdateien sind unverschlüsselt", Mutating: true},
 		{ID: "podman", Description: "Rootless Podman, pasta, cgroup v2 und UserNS vorbereiten", Mutating: true},
 		{ID: "paths", Description: "passive Core-Plattformpfade erzeugen", Mutating: true},
 		{ID: "edge", Description: "root-eigene Socket-Proxies für 80 und 443 erzeugen", Mutating: true},
