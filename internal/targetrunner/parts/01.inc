@@ -79,6 +79,48 @@ def check_preconditions(manifest: dict[str, Any]) -> None:
             raise RuntimeError(f"unsupported precondition: {kind}")
 
 
+def is_core_restore(manifest: dict[str, Any]) -> bool:
+    if manifest.get("subject_kind") != "core" or manifest.get("subject_id") != "core":
+        return False
+    return any(str(action.get("id", "")) == "core-restore" for action in manifest.get("actions", []))
+
+
+def require_root_only_directory(path: Path) -> None:
+    st = path.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or stat.S_IMODE(st.st_mode) != 0o700:
+        raise RuntimeError(f"Core restore staging directory is unsafe: {path}")
+
+
+def require_core_restore_staging(manifest: dict[str, Any]) -> None:
+    if not is_core_restore(manifest):
+        return
+    bundle_id = str(manifest.get("bundle_id", ""))
+    if not bundle_id.startswith("bundle_") or "/" in bundle_id or "\\" in bundle_id or "\x00" in bundle_id:
+        raise RuntimeError("Core restore bundle identity is invalid")
+    active_dir = CORE_RESTORE_ROOT / "active"
+    bundle_root = CORE_RESTORE_ROOT / bundle_id
+    claim = active_dir / "bundle"
+    payload = bundle_root / "payload.tar.zst"
+    try:
+        require_root_only_directory(CORE_RESTORE_ROOT)
+        require_root_only_directory(active_dir)
+        require_root_only_directory(bundle_root)
+        claim_st = claim.lstat()
+        payload_st = payload.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError("verified Core restore payload is not staged") from exc
+    if not stat.S_ISREG(claim_st.st_mode) or claim_st.st_uid != 0 or stat.S_IMODE(claim_st.st_mode) != 0o400:
+        raise RuntimeError("Core restore staging claim is unsafe")
+    try:
+        active_bundle = claim.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Core restore staging claim is invalid") from exc
+    if active_bundle != bundle_id + "\n":
+        raise RuntimeError("Core restore staging claim does not match bundle")
+    if not stat.S_ISREG(payload_st.st_mode) or payload_st.st_uid != 0 or stat.S_IMODE(payload_st.st_mode) != 0o400 or payload_st.st_size <= 0:
+        raise RuntimeError("Core restore staged payload is unsafe")
+
+
 def read_secrets(fifo: Path) -> dict[str, bytes]:
     result: dict[str, bytes] = {}
     with fifo.open("rb", buffering=0) as stream:
