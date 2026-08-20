@@ -55,6 +55,11 @@ func (l *Lifecycle) ExecuteRestore(ctx context.Context, prepared Prepared, req R
 	if err := validatePreparedRestoreArtifact(prepared, req.BackupID, restore); err != nil {
 		return execution.Run{}, err
 	}
+	secretValues, err := restoredCoreSecretValues(restore.CandidateRoot, prepared.DesiredCore.Secrets)
+	if err != nil {
+		return execution.Run{}, err
+	}
+	defer zeroCoreSecretValues(secretValues)
 
 	payload, err := os.Open(restore.PayloadPath)
 	if err != nil {
@@ -72,7 +77,7 @@ func (l *Lifecycle) ExecuteRestore(ctx context.Context, prepared Prepared, req R
 	if executeErr != nil {
 		return run, errors.Join(executeErr, cleanupErr)
 	}
-	if err := l.completeRestoredCoreExecution(ctx, prepared, restore.CandidateRoot); err != nil {
+	if err := l.completeRestoredCoreExecution(ctx, prepared, secretValues); err != nil {
 		return run, errors.Join(err, cleanupErr)
 	}
 	if cleanupErr != nil {
@@ -81,7 +86,7 @@ func (l *Lifecycle) ExecuteRestore(ctx context.Context, prepared Prepared, req R
 	return run, nil
 }
 
-func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared Prepared, candidateRoot string) error {
+func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared Prepared, secretValues map[managementstate.SecretID][]byte) error {
 	observed, err := l.inspector.Inspect(ctx, prepared.TargetID)
 	if err != nil {
 		return fmt.Errorf("inspect Core after restore execution: %w", err)
@@ -89,12 +94,6 @@ func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared 
 	if err := validatePostState(prepared, observed); err != nil {
 		return fmt.Errorf("Core restore post-validation failed: %w", err)
 	}
-	values, err := restoredCoreSecretValues(candidateRoot, prepared.DesiredCore.Secrets)
-	if err != nil {
-		return err
-	}
-	defer zeroCoreSecretValues(values)
-
 	snapshot, err := l.state.Snapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("read Management State after Core restore validation: %w", err)
@@ -108,7 +107,7 @@ func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared 
 	ids := prepared.DesiredCore.Secrets.IDs()
 	if err := l.state.Change(ctx, func(change *managementstate.Change) error {
 		for _, id := range ids {
-			if err := change.RotateSecret(id, values[id]); err != nil {
+			if err := change.RotateSecret(id, secretValues[id]); err != nil {
 				return err
 			}
 		}
