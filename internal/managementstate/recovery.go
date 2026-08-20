@@ -175,8 +175,8 @@ func (s *Store) ReplaceFromRecovery(ctx context.Context, recovery RecoveryState,
 	}
 	for _, bundle := range recovery.Snapshot.ExecutionBundles {
 		if _, err := conn.ExecContext(ctx,
-			`INSERT INTO execution_bundles(id,target_id,kind,version,sha256,created_at) VALUES(?,?,?,?,?,?)`,
-			bundle.ID, bundle.TargetID, bundle.Kind, bundle.Version, bundle.SHA256, bundle.CreatedAt,
+			`INSERT INTO execution_bundles(id,target_id,kind,version,sha256,backup_ref,created_at) VALUES(?,?,?,?,?,?,?)`,
+			bundle.ID, bundle.TargetID, bundle.Kind, bundle.Version, bundle.SHA256, bundle.BackupRef, bundle.CreatedAt,
 		); err != nil {
 			return fmt.Errorf("import execution bundle %s: %w", bundle.ID, err)
 		}
