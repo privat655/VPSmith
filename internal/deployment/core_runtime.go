@@ -41,6 +41,7 @@ RuntimeMaxUse=50M
 Storage=none
 ProcessSizeMax=0
 `),
+		textArtifact("generated/apport", "/etc/default/apport", 0o644, "enabled=0\n"),
 		textArtifact("generated/tmp.mount", "/etc/systemd/system/tmp.mount", 0o644, `[Unit]
 Description=VPSmith hardened temporary directory
 Before=local-fs.target
@@ -49,7 +50,7 @@ Before=local-fs.target
 What=tmpfs
 Where=/tmp
 Type=tmpfs
-Options=mode=1777,strictatime,nosuid,nodev,noexec,size=25%%
+Options=mode=1777,strictatime,nosuid,nodev,noexec,size=25%
 
 [Install]
 WantedBy=local-fs.target
@@ -65,7 +66,7 @@ default_rootless_network_cmd="pasta"
 		textArtifact("generated/caddy-edge-https.socket", "/etc/systemd/system/caddy-edge-https.socket", 0o644, edgeSocket("HTTPS", 443)),
 		textArtifact("generated/caddy-edge-https.service", "/etc/systemd/system/caddy-edge-https.service", 0o644, edgeService("HTTPS", "caddy-edge-https.socket", 8443)),
 		textArtifact("generated/Caddyfile", "/var/lib/vpsmith/core/caddy/Caddyfile", 0o644, coreCaddyfile(req)),
-		textArtifact("generated/authelia-configuration.yml", "/var/lib/vpsmith/core/authelia/configuration.yml", 0o600, coreAutheliaConfiguration(req)),
+		textArtifact("generated/authelia-configuration.yml", "/var/lib/vpsmith/core/authelia/configuration.yml", 0o644, coreAutheliaConfiguration(req)),
 		textArtifact("generated/vpsmith-core.network", filepath.Join(quadletRoot, "vpsmith-core.network"), 0o640, `[Network]
 NetworkName=vpsmith_core
 Driver=bridge
@@ -312,6 +313,7 @@ ContainerName=authelia
 Image=%s
 Network=vpsmith-core.network
 NetworkAlias=authelia
+User=1000:1000
 UserNS=nomap
 Volume=/var/lib/vpsmith/core/authelia/configuration.yml:/config/configuration.yml:ro
 Volume=/var/lib/vpsmith/core/authelia/data:/data
@@ -350,6 +352,7 @@ Image=%s
 Network=vpsmith-egress.network
 Network=vpsmith-core.network
 NetworkAlias=caddy
+User=1000:1000
 UserNS=nomap
 PublishPort=127.0.0.1:8080:80/tcp
 PublishPort=127.0.0.1:8443:443/tcp
@@ -401,6 +404,7 @@ func coreInventoryArtifact(req CoreRequest, artifacts []GeneratedArtifact) (Gene
 	for _, item := range artifacts {
 		managed = append(managed, item.TargetPath)
 	}
+	managed = append(managed, coreGeneratedInventoryTarget)
 	sort.Strings(managed)
 	inventory := generatedCoreInventory{
 		SourceID: req.Source.SourceID, Version: req.Source.Version, PackageSHA256: req.Source.PackageSHA256,
