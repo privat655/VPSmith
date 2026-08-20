@@ -95,3 +95,32 @@ func validCoreImageDigest(value string) bool {
 	}
 	return true
 }
+
+func requireCoreBackupReady(snapshot managementstate.Snapshot, target managementstate.Target, observed managementstate.ObservedState) error {
+	desired := target.Desired.Core
+	if desired.SourceID == "" || desired.Version == "" || desired.CoreContract == "" {
+		return errors.New("Core backup requires complete canonical desired identity")
+	}
+	artifact, err := exactCoreArtifact(snapshot.Sources.Artifacts, desired.SourceID)
+	if err != nil {
+		return err
+	}
+	if observed.Core.SourceID != desired.SourceID || observed.Core.Version != desired.Version || observed.Core.PackageSHA256 != artifact.SHA256 {
+		return errors.New("Core backup requires desired/observed exact identity match")
+	}
+	if err := requireSecondaryHardening(observed.Host.SecondaryHardening); err != nil {
+		return err
+	}
+	if err := requireCoreListeners(observed.Host.Listeners); err != nil {
+		return err
+	}
+	if err := requireSwapPostState(desired.Swap, observed.Host.SwapDevices, observed.Host); err != nil {
+		return err
+	}
+	if !observed.Core.Podman.Present || !observed.Core.Podman.Rootless || observed.Core.Podman.CgroupVersion != "v2" || observed.Core.Podman.RootlessNetworkCmd != "pasta" ||
+		!observed.Core.Running || !observed.Core.Caddy.Present || !observed.Core.Caddy.Running || !observed.Core.Caddy.ConfigChecked || !observed.Core.Caddy.ConfigValid ||
+		!observed.Core.Authelia.Present || !observed.Core.Authelia.Running {
+		return errors.New("Core backup requires a healthy Core runtime")
+	}
+	return nil
+}
