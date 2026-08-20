@@ -105,6 +105,9 @@ func requireCoreBackupReady(snapshot managementstate.Snapshot, target management
 	if err != nil {
 		return err
 	}
+	if artifact.Version != desired.Version {
+		return errors.New("Core backup source version does not match canonical source artifact")
+	}
 	if observed.Core.SourceID != desired.SourceID || observed.Core.Version != desired.Version || observed.Core.PackageSHA256 != artifact.SHA256 {
 		return errors.New("Core backup requires desired/observed exact identity match")
 	}
