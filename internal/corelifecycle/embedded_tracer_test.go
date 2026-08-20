@@ -2,6 +2,7 @@ package corelifecycle
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -160,6 +161,7 @@ func TestEmbeddedCorePreparesInstallThroughCanonicalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lifecycle.dns = dnsResolverStub{ips: []net.IP{net.ParseIP("192.0.2.10")}}
 	prepared, err := lifecycle.PrepareInstall(ctx, PrepareRequest{
 		TargetID: targetID,
 		Configuration: CoreConfiguration{
