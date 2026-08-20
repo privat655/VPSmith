@@ -105,6 +105,44 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 	}
 }
 
+func TestPrepareCoreRestoreUsesBackedUpImageLocksInsteadOfRegistryResolution(t *testing.T) {
+	compiler := coreCompiler(t)
+	req := coreRequest(Restore)
+	req.ObservedCoreID = "source-core-newer"
+	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
+	req.FrozenImages = map[string]FrozenCoreImage{
+		"caddy":    {Ref: caddyTestRef, Digest: "sha256:" + strings.Repeat("d", 64)},
+		"authelia": {Ref: autheliaTestRef, Digest: "sha256:" + strings.Repeat("e", 64)},
+	}
+
+	prepared, err := compiler.PrepareCore(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, image := range prepared.Bundle.Manifest.Images {
+		got[image.Name] = image.Digest
+	}
+	if got["caddy"] != req.FrozenImages["caddy"].Digest || got["authelia"] != req.FrozenImages["authelia"].Digest {
+		t.Fatalf("restore did not preserve backed-up image locks: %#v", got)
+	}
+}
+
+func TestPrepareCoreRejectsFrozenImageLocksOutsideRestore(t *testing.T) {
+	compiler := coreCompiler(t)
+	req := coreRequest(Update)
+	req.ObservedCoreID = "source-core-old"
+	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
+	req.BackupRequired = true
+	req.FrozenImages = map[string]FrozenCoreImage{
+		"caddy":    {Ref: caddyTestRef, Digest: "sha256:" + strings.Repeat("d", 64)},
+		"authelia": {Ref: autheliaTestRef, Digest: "sha256:" + strings.Repeat("e", 64)},
+	}
+	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
+		t.Fatal("non-restore Core operation accepted backed-up image locks")
+	}
+}
+
 func TestPrepareCoreValidationCannotCarryMutation(t *testing.T) {
 	compiler := coreCompiler(t)
 	req := coreRequest(Validate)
