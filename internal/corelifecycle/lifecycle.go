@@ -16,7 +16,6 @@ import (
 	"github.com/privat655/VPSmith/internal/execution"
 	"github.com/privat655/VPSmith/internal/managementstate"
 	"github.com/privat655/VPSmith/internal/sourcelibrary"
-	"github.com/privat655/VPSmith/internal/targetgateway"
 )
 
 const maxAutoSwapBytes int64 = 4 << 30
@@ -33,6 +32,12 @@ type Compiler interface {
 	PrepareCore(context.Context, deployment.CoreRequest) (deployment.PreparedCoreOperation, error)
 }
 
+type CoreBackupStorage interface {
+	backuprestore.TargetStorage
+	QuiesceCoreRuntime(context.Context, string) error
+	ResumeAndValidateCoreRuntime(context.Context, string) error
+}
+
 type Lifecycle struct {
 	state     *managementstate.Store
 	sources   Sources
@@ -40,7 +45,7 @@ type Lifecycle struct {
 	compiler  Compiler
 	executor  *execution.Executor
 	backups   *backuprestore.Manager
-	storage   *targetgateway.StorageBackupTarget
+	storage   CoreBackupStorage
 }
 
 type CoreConfiguration struct {
@@ -79,11 +84,12 @@ type ReconcileRequest struct {
 }
 
 type verifiedBackup struct {
-	Manifest backuprestore.Manifest
-	Desired  managementstate.CoreDesiredState
+	Manifest   backuprestore.Manifest
+	Desired    managementstate.CoreDesiredState
+	ImageLocks coreBackupImageLocks
 }
 
-func New(state *managementstate.Store, sources Sources, inspector Inspector, compiler Compiler, executor *execution.Executor, backups *backuprestore.Manager, storage *targetgateway.StorageBackupTarget) (*Lifecycle, error) {
+func New(state *managementstate.Store, sources Sources, inspector Inspector, compiler Compiler, executor *execution.Executor, backups *backuprestore.Manager, storage CoreBackupStorage) (*Lifecycle, error) {
 	if state == nil || sources == nil || inspector == nil || compiler == nil || executor == nil || backups == nil || storage == nil {
 		return nil, errors.New("complete Core lifecycle dependencies are required")
 	}
@@ -174,18 +180,37 @@ func (l *Lifecycle) Backup(ctx context.Context, req BackupRequest) (backuprestor
 	if err != nil {
 		return backuprestore.Artifact{}, err
 	}
-	paths := []string{"/var/lib/vpsmith/core", "/var/lib/vpsmith/inventory", "/var/lib/vpsmith/execution"}
-	copy, err := l.backups.CopyOfflineStorage(ctx, l.storage, string(req.TargetID), paths)
-	if err != nil {
+	if err := requireCoreBackupReady(snapshot, target, observed); err != nil {
+		return backuprestore.Artifact{}, fmt.Errorf("Core backup preflight failed: %w", err)
+	}
+
+	targetID := string(req.TargetID)
+	if err := l.storage.QuiesceCoreRuntime(ctx, targetID); err != nil {
 		return backuprestore.Artifact{}, err
 	}
+	recoveryCtx := context.WithoutCancel(ctx)
+	copy, copyErr := l.backups.CopyOfflineStorage(ctx, l.storage, targetID, coreBackupStoragePaths())
+	resumeErr := l.storage.ResumeAndValidateCoreRuntime(recoveryCtx, targetID)
+	if copyErr != nil {
+		var cleanupErr error
+		if copy.Token != "" {
+			cleanupErr = l.backups.CleanupTargetStorageCopy(recoveryCtx, l.storage, targetID, copy.Token)
+		}
+		return backuprestore.Artifact{}, errors.Join(copyErr, resumeErr, cleanupErr)
+	}
 	defer copy.Close()
+	if resumeErr != nil {
+		cleanupErr := l.backups.CleanupTargetStorageCopy(recoveryCtx, l.storage, targetID, copy.Token)
+		return backuprestore.Artifact{}, errors.Join(resumeErr, cleanupErr)
+	}
+
 	producer := corePayloadProducer{copy: copy, observed: observed, desired: target.Desired.Core, bundleRef: latestSuccessfulBundle(snapshot, req.TargetID)}
 	artifact, err := l.backups.Create(ctx, backuprestore.CreateRequest{Type: managementstate.BackupCore, TargetID: req.TargetID, Passphrase: req.Passphrase, Producer: producer})
 	if err != nil {
-		return backuprestore.Artifact{}, err
+		cleanupErr := l.backups.CleanupTargetStorageCopy(recoveryCtx, l.storage, targetID, copy.Token)
+		return backuprestore.Artifact{}, errors.Join(err, cleanupErr)
 	}
-	if err := l.backups.FinalizeStorageCopy(ctx, l.storage, &copy); err != nil {
+	if err := l.backups.FinalizeStorageCopy(recoveryCtx, l.storage, &copy); err != nil {
 		return backuprestore.Artifact{}, fmt.Errorf("Core backup persisted but target temporary copy cleanup failed: %w", err)
 	}
 	return artifact, nil
@@ -357,37 +382,56 @@ func (l *Lifecycle) verifiedCoreBackup(ctx context.Context, req PrepareRequest, 
 			return verifiedBackup{}, errors.New("Core update backup does not match the installed exact Core identity")
 		}
 	}
-	desired, err := desiredCoreFromBackup(inspection)
+	desired, locks, err := coreStateFromBackup(inspection)
 	if err != nil {
 		return verifiedBackup{}, err
 	}
-	if desired.SourceID != managementstate.SourceSnapshotID(manifest.Identity.SubjectID) || desired.Version != manifest.Identity.Version {
-		return verifiedBackup{}, errors.New("Core backup desired state identity does not match manifest")
+	if desired.SourceID != managementstate.SourceSnapshotID(manifest.Identity.SubjectID) || desired.Version != manifest.Identity.Version || locks.SourceID != desired.SourceID || locks.Version != desired.Version || locks.PackageSHA256 != manifest.Identity.PackageSHA256 {
+		return verifiedBackup{}, errors.New("Core backup desired state or image locks do not match manifest identity")
 	}
-	return verifiedBackup{Manifest: manifest, Desired: desired}, nil
+	return verifiedBackup{Manifest: manifest, Desired: desired, ImageLocks: locks}, nil
 }
 
-func desiredCoreFromBackup(inspection *backuprestore.Inspection) (managementstate.CoreDesiredState, error) {
+func coreStateFromBackup(inspection *backuprestore.Inspection) (managementstate.CoreDesiredState, coreBackupImageLocks, error) {
 	if inspection == nil || inspection.PayloadPath == "" {
-		return managementstate.CoreDesiredState{}, errors.New("validated Core backup payload is required")
+		return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, errors.New("validated Core backup payload is required")
 	}
 	root, err := os.MkdirTemp("", "vpsmith-core-backup-")
 	if err != nil {
-		return managementstate.CoreDesiredState{}, err
+		return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, err
 	}
 	defer os.RemoveAll(root)
 	if err := backuprestore.ExtractTarZst(inspection.PayloadPath, root, backuprestore.ArchiveOptions{}); err != nil {
-		return managementstate.CoreDesiredState{}, fmt.Errorf("extract Core backup desired state: %w", err)
+		return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, fmt.Errorf("extract Core backup desired state: %w", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "management", "core-desired.json"))
 	if err != nil {
-		return managementstate.CoreDesiredState{}, fmt.Errorf("read Core backup desired state: %w", err)
+		return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, fmt.Errorf("read Core backup desired state: %w", err)
 	}
 	var desired managementstate.CoreDesiredState
 	if err := json.Unmarshal(data, &desired); err != nil {
-		return managementstate.CoreDesiredState{}, fmt.Errorf("decode Core backup desired state: %w", err)
+		return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, fmt.Errorf("decode Core backup desired state: %w", err)
 	}
-	return desired, nil
+	lockData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(coreBackupImageLocksRef)))
+	if err != nil {
+		return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, fmt.Errorf("read Core backup image locks: %w", err)
+	}
+	var locks coreBackupImageLocks
+	if err := json.Unmarshal(lockData, &locks); err != nil {
+		return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, fmt.Errorf("decode Core backup image locks: %w", err)
+	}
+	for _, name := range []string{"caddy", "authelia"} {
+		image, ok := locks.Images[name]
+		if !ok || strings.TrimSpace(image.Ref) == "" || !validCoreImageDigest(image.Digest) {
+			return managementstate.CoreDesiredState{}, coreBackupImageLocks{}, fmt.Errorf("Core backup image lock for %s is invalid", name)
+		}
+	}
+	return desired, locks, nil
+}
+
+func desiredCoreFromBackup(inspection *backuprestore.Inspection) (managementstate.CoreDesiredState, error) {
+	desired, _, err := coreStateFromBackup(inspection)
+	return desired, err
 }
 
 func candidateForOperation(kind deployment.OperationKind, req PrepareRequest, observed managementstate.ObservedState, backup *verifiedBackup) (sourcelibrary.CoreCandidateRef, error) {
@@ -522,6 +566,13 @@ func (p corePayloadProducer) Produce(ctx context.Context, root string) (backupre
 		return backuprestore.PayloadDescriptor{}, err
 	}
 	if err := backuprestore.ExtractTarZst(p.copy.ArchivePath, root, backuprestore.ArchiveOptions{}); err != nil {
+		return backuprestore.PayloadDescriptor{}, err
+	}
+	locks, err := captureCoreImageLocks(root, p.observed)
+	if err != nil {
+		return backuprestore.PayloadDescriptor{}, err
+	}
+	if err := writeCoreImageLocks(root, locks); err != nil {
 		return backuprestore.PayloadDescriptor{}, err
 	}
 	managementDir := filepath.Join(root, "management")
