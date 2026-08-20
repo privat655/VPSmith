@@ -7,7 +7,10 @@ import (
 )
 
 func init() {
-	migrations = append(migrations, migration{version: 3, up: migrateV3})
+	migrations = append(migrations,
+		migration{version: 3, up: migrateV3},
+		migration{version: 4, up: migrateV4},
+	)
 }
 
 // migrateV3 retires the Step-2 source tables after Step 3 established
@@ -25,6 +28,16 @@ ALTER TABLE module_sources RENAME TO legacy_module_sources_v1;
 `
 	if _, err := conn.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("retire legacy source schema: %w", err)
+	}
+	return nil
+}
+
+// migrateV4 makes the concrete backup used by a structural execution part of
+// immutable local bundle history. Existing historical bundles predate this
+// contract and therefore migrate with an empty reference.
+func migrateV4(ctx context.Context, conn *sql.Conn) error {
+	if _, err := conn.ExecContext(ctx, `ALTER TABLE execution_bundles ADD COLUMN backup_ref TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add execution bundle backup reference: %w", err)
 	}
 	return nil
 }
