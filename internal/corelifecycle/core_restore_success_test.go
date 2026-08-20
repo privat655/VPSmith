@@ -233,11 +233,11 @@ func restoreSuccessBundle(t *testing.T, targetID managementstate.TargetID, desir
 			{Name: "caddy", Ref: "docker.io/library/caddy:2.11.4-alpine", Digest: "sha256:" + strings.Repeat("b", 64)},
 			{Name: "authelia", Ref: "docker.io/authelia/authelia:4.39.20", Digest: "sha256:" + strings.Repeat("c", 64)},
 		},
-		Actions: []executionbundle.File{{Path: "actions/restore.sh", Mode: 0o500, Data: []byte("#!/bin/sh\nexit 0\n")}},
-		ActionIDs: []string{"core-restore"},
+		Actions:       []executionbundle.File{{Path: "actions/restore.sh", Mode: 0o500, Data: []byte("#!/bin/sh\nexit 0\n")}},
+		ActionIDs:     []string{"core-restore"},
 		Preconditions: []executionbundle.Precondition{{Kind: "target", Subject: string(targetID), Expected: "same-target"}},
 		ExpectedPost:  map[string]any{"artifacts": map[string]string{}},
-		Steps: []executionbundle.Step{{ID: "core-restore", Kind: "action", Action: "core-restore", Mutating: true}},
+		Steps:         []executionbundle.Step{{ID: "core-restore", Kind: "action", Action: "core-restore", Mutating: true}},
 	})
 	if err != nil {
 		t.Fatal(err)
