@@ -57,7 +57,7 @@ func TestStageCoreRestorePayloadStreamsThroughStrictSSHToBundleScopedRootOnlyPat
 	command := runner.calls[0].args[len(runner.calls[0].args)-1]
 	for _, required := range []string{
 		"/var/lib/vpsmith/tmp/core-restore/" + bundleID,
-		"payload.tar.zst.upload.$$",
+		"tmp=\"$dest.upload.$$\"",
 		"sha256sum",
 		"stat -c %s",
 		"chmod 0400",
