@@ -165,6 +165,9 @@ func (l *Lifecycle) previousCoreStateFromBackup(ctx context.Context, backupID ma
 	if identity.SubjectID != string(desired.SourceID) || identity.Version != desired.Version || identity.PackageSHA256 != locks.PackageSHA256 || locks.SourceID != desired.SourceID || locks.Version != desired.Version {
 		return PreviousCoreState{}, errors.New("immediate Core backup identity is inconsistent")
 	}
+	if identity.ExecutionBundleRef == "" {
+		return PreviousCoreState{}, errors.New("immediate Core backup has no verified historical Core execution bundle")
+	}
 	images := make(map[string]deployment.FrozenCoreImage, len(locks.Images))
 	for name, image := range locks.Images {
 		images[name] = deployment.FrozenCoreImage{Ref: image.Ref, Digest: image.Digest}
