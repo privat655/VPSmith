@@ -19,7 +19,7 @@ func requireCoreOwnedPostState(prepared Prepared, observed managementstate.Obser
 	if err := requireCoreListeners(observed.Host.Listeners); err != nil {
 		return err
 	}
-	if err := requireSwapPostState(prepared.DesiredCore.Swap, observed.Host); err != nil {
+	if err := requireSwapPostState(prepared.DesiredCore.Swap, prepared.SwapBefore, observed.Host); err != nil {
 		return err
 	}
 	return nil
@@ -75,7 +75,7 @@ func requireCoreListeners(listeners []managementstate.ListenerObservedState) err
 	return nil
 }
 
-func requireSwapPostState(desired managementstate.SwapDesiredState, host managementstate.HostObservedState) error {
+func requireSwapPostState(desired managementstate.SwapDesiredState, before []managementstate.SwapDeviceObservedState, host managementstate.HostObservedState) error {
 	swaps := host.SwapDevices
 	switch desired.Mode {
 	case "none":
@@ -84,8 +84,11 @@ func requireSwapPostState(desired managementstate.SwapDesiredState, host managem
 		}
 		return nil
 	case "preserve-existing":
-		if len(swaps) != 1 || swaps[0].CoreManaged {
-			return errors.New("swap post-state does not preserve exactly one foreign swap device")
+		if len(before) != 1 || before[0].CoreManaged {
+			return errors.New("preserve-existing requires exactly one foreign swap device before execution")
+		}
+		if len(swaps) != 1 || swaps[0].CoreManaged || !samePreservedSwap(before[0], swaps[0]) {
+			return errors.New("swap post-state did not preserve the existing foreign swap device unchanged")
 		}
 		return nil
 	case "swapfile":
@@ -106,4 +109,8 @@ func requireSwapPostState(desired managementstate.SwapDesiredState, host managem
 	default:
 		return errors.New("swap post-state has unsupported desired mode")
 	}
+}
+
+func samePreservedSwap(before, after managementstate.SwapDeviceObservedState) bool {
+	return before.Path == after.Path && before.Kind == after.Kind && before.SizeBytes == after.SizeBytes && before.Priority == after.Priority
 }
