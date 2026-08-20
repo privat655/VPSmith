@@ -184,6 +184,7 @@ func (l *Lifecycle) reconcileRestoredCoreSecrets(ctx context.Context, candidateR
 			if err := change.RotateSecret(id, values[id]); err != nil {
 				return err
 			}
+		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("reconcile restored Core secrets in Management State: %w", err)
