@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"sort"
 	"strings"
@@ -34,8 +35,12 @@ func compileCoreDefinition(source fs.FS, expectedVersion string) (coreDefinition
 	if err := decoder.Decode(&definition); err != nil {
 		return coreDefinition{}, fmt.Errorf("decode Core definition: %w", err)
 	}
-	if decoder.More() {
-		return coreDefinition{}, errors.New("Core definition contains trailing JSON values")
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return coreDefinition{}, errors.New("Core definition contains trailing JSON values")
+		}
+		return coreDefinition{}, fmt.Errorf("decode trailing Core definition data: %w", err)
 	}
 	if strings.TrimSpace(definition.CoreVersion) == "" || definition.CoreVersion != expectedVersion {
 		return coreDefinition{}, errors.New("Core definition version does not match frozen source version")
