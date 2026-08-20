@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const CurrentSchemaVersion = 3
+const CurrentSchemaVersion = 4
 
 type TargetID string
 type ModulePackageID string
@@ -224,6 +224,7 @@ type ExecutionBundleMetadata struct {
 	Kind      string            `json:"kind"`
 	Version   string            `json:"version"`
 	SHA256    string            `json:"sha256"`
+	BackupRef BackupArtifactID  `json:"backup_ref,omitempty"`
 	CreatedAt string            `json:"created_at"`
 }
 
