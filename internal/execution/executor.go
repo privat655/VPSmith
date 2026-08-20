@@ -67,7 +67,7 @@ func (e *Executor) execute(ctx context.Context, targetID string, bundle executio
 	if err != nil {
 		return Run{}, fmt.Errorf("allocate execution run id: %w", err)
 	}
-	run := Run{ID: runID, TargetID: targetID, BundleID: bundle.ID, BundleSHA256: bundle.SHA256, Kind: string(manifest.Kind), Version: manifest.Version, Status: StatusNotStarted}
+	run := Run{ID: runID, TargetID: targetID, BundleID: bundle.ID, BundleSHA256: bundle.SHA256, Kind: string(manifest.Kind), Version: manifest.Version, BackupRef: manifest.BackupRef, Status: StatusNotStarted}
 	if err := e.target.Upload(ctx, targetID, bundle); err != nil {
 		return run, fmt.Errorf("upload execution bundle: %w", err)
 	}
