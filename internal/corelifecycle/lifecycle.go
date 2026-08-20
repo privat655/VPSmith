@@ -305,7 +305,7 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 		coreReq.ObservedCoreID = string(observed.Core.SourceID)
 		coreReq.ObservedCoreSHA256 = observed.Core.PackageSHA256
 	}
-	operation, err := l.compiler.PrepareCore(ctx, coreReq)
+	operation, err := prepareCoreOperation(ctx, l.compiler, kind, coreReq, backup)
 	if err != nil {
 		return Prepared{}, err
 	}
