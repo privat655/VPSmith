@@ -2,6 +2,7 @@ package corelifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"net"
 	"strings"
@@ -155,12 +156,22 @@ func seedSuccessfulCoreBundle(t *testing.T, lifecycle *Lifecycle, targetID manag
 }
 
 func coreUpdateFS(version, contract string) fs.FS {
-	files := fstest.MapFS{
-		"core.json":          &fstest.MapFile{Data: []byte(`{"core_version":"` + version + `","core_contract":"` + contract + `","images":{"caddy":{"ref":"docker.io/library/caddy:2.11.4-alpine"},"authelia":{"ref":"docker.io/authelia/authelia:4.39.20"}}}`)},
+	data, err := json.Marshal(map[string]any{
+		"core_version":  version,
+		"core_contract": contract,
+		"images": map[string]any{
+			"caddy":    map[string]string{"ref": "docker.io/library/caddy:2.11.4-alpine"},
+			"authelia": map[string]string{"ref": "docker.io/authelia/authelia:4.39.20"},
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return fstest.MapFS{
+		"core.json":          &fstest.MapFile{Data: data},
 		"actions/runtime.sh": &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\n")},
 		"actions/update.sh":  &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\nexit 0\n"), Mode: 0o755},
 	}
-	return files
 }
 
 func equalStrings(a, b []string) bool {
