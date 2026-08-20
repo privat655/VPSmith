@@ -372,7 +372,7 @@ func (c *Change) AppendExecutionBundle(value ExecutionBundleMetadata) error {
 	if err := c.rejectKnownSecretMaterial(value); err != nil {
 		return err
 	}
-	_, err := c.conn.ExecContext(c.ctx, `INSERT INTO execution_bundles(id,target_id,kind,version,sha256,created_at) VALUES(?,?,?,?,?,?)`, value.ID, value.TargetID, value.Kind, value.Version, value.SHA256, value.CreatedAt)
+	_, err := c.conn.ExecContext(c.ctx, `INSERT INTO execution_bundles(id,target_id,kind,version,sha256,backup_ref,created_at) VALUES(?,?,?,?,?,?,?)`, value.ID, value.TargetID, value.Kind, value.Version, value.SHA256, value.BackupRef, value.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("append execution bundle: %w", err)
 	}
@@ -517,7 +517,7 @@ func (c *Change) assertMaterialAbsentFromDomain(material []byte) error {
 		`SELECT kind||package_id||package_path||version||commit_sha||sha256||storage_ref FROM source_artifacts`,
 		`SELECT kind||package_id||package_path||base_source_id||base_commit||current_sha256||storage_ref||synchronized_commit FROM source_workspaces`,
 		`SELECT owner||repository||ref FROM custom_module_github`,
-		`SELECT kind||version||sha256 FROM execution_bundles`,
+		`SELECT kind||version||sha256||backup_ref FROM execution_bundles`,
 		`SELECT outcome FROM execution_records`,
 		`SELECT location_ref||sha256 FROM backups`,
 	} {
@@ -647,13 +647,13 @@ func (s *Store) readSecrets(ctx context.Context, out *Snapshot) error {
 }
 
 func (s *Store) readHistory(ctx context.Context, out *Snapshot) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,target_id,kind,version,sha256,created_at FROM execution_bundles ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,target_id,kind,version,sha256,backup_ref,created_at FROM execution_bundles ORDER BY id`)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var v ExecutionBundleMetadata
-		if err := rows.Scan(&v.ID, &v.TargetID, &v.Kind, &v.Version, &v.SHA256, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.TargetID, &v.Kind, &v.Version, &v.SHA256, &v.BackupRef, &v.CreatedAt); err != nil {
 			rows.Close()
 			return err
 		}
