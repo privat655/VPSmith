@@ -503,6 +503,9 @@ func validatePostState(prepared Prepared, observed managementstate.ObservedState
 	if !reflect.DeepEqual(prepared.PrimaryBefore, observed.Host.PrimaryHardening) {
 		return errors.New("Core operation changed Cloud-init-owned Primary Host Hardening")
 	}
+	if err := requireCoreOwnedPostState(prepared, observed); err != nil {
+		return err
+	}
 	if !observed.Core.Present || observed.Core.SourceID != prepared.DesiredCore.SourceID || observed.Core.Version != prepared.DesiredCore.Version || observed.Core.PackageSHA256 != prepared.Operation.Bundle.Manifest.PackageSHA256 {
 		return errors.New("effective Core identity does not match the approved bundle")
 	}
