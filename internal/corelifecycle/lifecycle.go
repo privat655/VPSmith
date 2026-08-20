@@ -67,6 +67,7 @@ type Prepared struct {
 	TargetID      managementstate.TargetID
 	DesiredCore   managementstate.CoreDesiredState
 	PrimaryBefore managementstate.PrimaryHardeningObservedState
+	SwapBefore    []managementstate.SwapDeviceObservedState
 }
 
 type ReconcileRequest struct {
@@ -248,7 +249,7 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	if err := requireCoreSecretReferences(snapshot, desiredCore.Secrets); err != nil {
 		return Prepared{}, err
 	}
-	effectiveSwapBytes, err := resolveSwap(observed, desiredCore.Swap, kind == deployment.Install)
+	effectiveSwapBytes, err := resolveSwapV1(observed, desiredCore.Swap)
 	if err != nil {
 		return Prepared{}, err
 	}
@@ -284,7 +285,13 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	if kind == deployment.Restore && backup != nil && backup.Desired.CoreContract != "" && backup.Desired.CoreContract != operation.CoreContract {
 		return Prepared{}, errors.New("restored Core source core_contract does not match backed-up desired state")
 	}
-	return Prepared{Operation: operation, TargetID: req.TargetID, DesiredCore: desiredCore, PrimaryBefore: observed.Host.PrimaryHardening}, nil
+	return Prepared{
+		Operation:     operation,
+		TargetID:      req.TargetID,
+		DesiredCore:   desiredCore,
+		PrimaryBefore: observed.Host.PrimaryHardening,
+		SwapBefore:    append([]managementstate.SwapDeviceObservedState(nil), observed.Host.SwapDevices...),
+	}, nil
 }
 
 func desiredCoreForOperation(kind deployment.OperationKind, req PrepareRequest, current managementstate.CoreDesiredState, backup *verifiedBackup) (managementstate.CoreDesiredState, error) {
@@ -420,48 +427,6 @@ func deploymentCoreSecrets(refs managementstate.CoreSecretReferences) deployment
 		AutheliaStorage:       string(refs.AutheliaStorage),
 		AutheliaResetPassword: string(refs.AutheliaResetPassword),
 		AutheliaUsersDatabase: string(refs.AutheliaUsersDatabase),
-	}
-}
-
-func resolveSwap(observed managementstate.ObservedState, swap managementstate.SwapDesiredState, installing bool) (int64, error) {
-	switch swap.Mode {
-	case "none":
-		if swap.SizeGiB != 0 {
-			return 0, errors.New("Core swap size is only valid for swapfile")
-		}
-		return 0, nil
-	case "preserve-existing":
-		if swap.SizeGiB != 0 {
-			return 0, errors.New("Core swap size is only valid for swapfile")
-		}
-		if observed.Host.Swap.TotalBytes <= 0 {
-			return 0, errors.New("preserve-existing requires existing foreign swap")
-		}
-		if !installing {
-			return 0, errors.New("preserve-existing requires observed foreign-swap ownership before reconfiguration")
-		}
-		return 0, nil
-	case "swapfile":
-		var size int64
-		if swap.SizeGiB == 0 {
-			size = observed.Host.Memory.TotalBytes
-			if size > maxAutoSwapBytes {
-				size = maxAutoSwapBytes
-			}
-		} else if swap.SizeGiB > 0 {
-			size = int64(swap.SizeGiB) << 30
-		} else {
-			return 0, errors.New("Core swap size must be auto or a positive GiB value")
-		}
-		if size <= 0 {
-			return 0, errors.New("cannot determine Core swapfile size")
-		}
-		if observed.Host.RootFilesystem.AvailableBytes <= size {
-			return 0, errors.New("insufficient free disk space for Core swapfile")
-		}
-		return size, nil
-	default:
-		return 0, errors.New("Core swap mode must be none, swapfile, or preserve-existing")
 	}
 }
 
