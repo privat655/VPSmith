@@ -29,7 +29,7 @@ type Inspector interface {
 }
 
 type Compiler interface {
-	PrepareCore(context.Context, deployment.CoreRequest) (deployment.PreparedOperation, error)
+	PrepareCore(context.Context, deployment.CoreRequest) (deployment.PreparedCoreOperation, error)
 }
 
 type Lifecycle struct {
@@ -42,9 +42,16 @@ type Lifecycle struct {
 	storage   *targetgateway.StorageBackupTarget
 }
 
+type CoreConfiguration struct {
+	Domain    string
+	ACMEEmail string
+	Secrets   managementstate.CoreSecretReferences
+}
+
 type PrepareRequest struct {
 	TargetID         managementstate.TargetID
 	Candidate        sourcelibrary.CoreCandidateRef
+	Configuration    CoreConfiguration
 	Swap             managementstate.SwapDesiredState
 	BackupID         managementstate.BackupArtifactID
 	BackupPassphrase []byte
@@ -56,7 +63,7 @@ type BackupRequest struct {
 }
 
 type Prepared struct {
-	Operation     deployment.PreparedOperation
+	Operation     deployment.PreparedCoreOperation
 	TargetID      managementstate.TargetID
 	DesiredCore   managementstate.CoreDesiredState
 	PrimaryBefore managementstate.PrimaryHardeningObservedState
@@ -69,44 +76,34 @@ type ReconcileRequest struct {
 	BundleSHA256 string
 }
 
+type verifiedBackup struct {
+	Manifest backuprestore.Manifest
+	Desired  managementstate.CoreDesiredState
+}
+
 func New(state *managementstate.Store, sources Sources, inspector Inspector, compiler Compiler, executor *execution.Executor, backups *backuprestore.Manager, storage *targetgateway.StorageBackupTarget) (*Lifecycle, error) {
 	if state == nil || sources == nil || inspector == nil || compiler == nil || executor == nil || backups == nil || storage == nil {
 		return nil, errors.New("complete Core lifecycle dependencies are required")
 	}
-	return &Lifecycle{
-		state:     state,
-		sources:   sources,
-		inspector: inspector,
-		compiler:  compiler,
-		executor:  executor,
-		backups:   backups,
-		storage:   storage,
-	}, nil
+	return &Lifecycle{state: state, sources: sources, inspector: inspector, compiler: compiler, executor: executor, backups: backups, storage: storage}, nil
 }
 
 func (l *Lifecycle) PrepareInstall(ctx context.Context, req PrepareRequest) (Prepared, error) {
 	return l.prepare(ctx, deployment.Install, req)
 }
-
 func (l *Lifecycle) PrepareUpdate(ctx context.Context, req PrepareRequest) (Prepared, error) {
 	return l.prepare(ctx, deployment.Update, req)
 }
-
 func (l *Lifecycle) PrepareSwapChange(ctx context.Context, req PrepareRequest) (Prepared, error) {
 	return l.prepare(ctx, deployment.Reconfigure, req)
 }
-
 func (l *Lifecycle) PrepareRestore(ctx context.Context, req PrepareRequest) (Prepared, error) {
 	return l.prepare(ctx, deployment.Restore, req)
 }
-
 func (l *Lifecycle) PrepareValidation(ctx context.Context, req PrepareRequest) (Prepared, error) {
 	return l.prepare(ctx, deployment.Validate, req)
 }
 
-// Execute is the only Core mutation entry point. A successful target runner is
-// not enough: the lifecycle inspects the real target again and commits desired
-// and observed state only after the complete Core postconditions hold.
 func (l *Lifecycle) Execute(ctx context.Context, prepared Prepared) (execution.Run, error) {
 	if prepared.TargetID == "" || prepared.Operation.Bundle.ID == "" {
 		return execution.Run{}, errors.New("prepared Core operation is required")
@@ -181,18 +178,8 @@ func (l *Lifecycle) Backup(ctx context.Context, req BackupRequest) (backuprestor
 		return backuprestore.Artifact{}, err
 	}
 	defer copy.Close()
-	producer := corePayloadProducer{
-		copy:      copy,
-		observed:  observed,
-		desired:   target.Desired.Core,
-		bundleRef: latestSuccessfulBundle(snapshot, req.TargetID),
-	}
-	artifact, err := l.backups.Create(ctx, backuprestore.CreateRequest{
-		Type:       managementstate.BackupCore,
-		TargetID:   req.TargetID,
-		Passphrase: req.Passphrase,
-		Producer:   producer,
-	})
+	producer := corePayloadProducer{copy: copy, observed: observed, desired: target.Desired.Core, bundleRef: latestSuccessfulBundle(snapshot, req.TargetID)}
+	artifact, err := l.backups.Create(ctx, backuprestore.CreateRequest{Type: managementstate.BackupCore, TargetID: req.TargetID, Passphrase: req.Passphrase, Producer: producer})
 	if err != nil {
 		return backuprestore.Artifact{}, err
 	}
@@ -231,16 +218,16 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 		return Prepared{}, errors.New("Core is not installed")
 	}
 
-	var backupManifest *backuprestore.Manifest
+	var backup *verifiedBackup
 	if kind == deployment.Update || kind == deployment.Restore {
-		manifest, err := l.verifiedCoreBackup(ctx, req, observed, kind)
+		verified, err := l.verifiedCoreBackup(ctx, req, observed, kind)
 		if err != nil {
 			return Prepared{}, err
 		}
-		backupManifest = &manifest
+		backup = &verified
 	}
 
-	candidateRef, err := candidateForOperation(kind, req, observed, backupManifest)
+	candidateRef, err := candidateForOperation(kind, req, observed, backup)
 	if err != nil {
 		return Prepared{}, err
 	}
@@ -248,20 +235,20 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	if err != nil {
 		return Prepared{}, err
 	}
-	if backupManifest != nil && kind == deployment.Restore {
-		if err := backupMatchesSource(*backupManifest, source); err != nil {
+	if backup != nil && kind == deployment.Restore {
+		if err := backupMatchesSource(backup.Manifest, source); err != nil {
 			return Prepared{}, err
 		}
 	}
 
-	swap := req.Swap
-	if kind == deployment.Update || kind == deployment.Validate {
-		swap = target.Desired.Core.Swap
+	desiredCore, err := desiredCoreForOperation(kind, req, target.Desired.Core, backup)
+	if err != nil {
+		return Prepared{}, err
 	}
-	if swap.Mode == "" {
-		swap.Mode = "none"
+	if err := requireCoreSecretReferences(snapshot, desiredCore.Secrets); err != nil {
+		return Prepared{}, err
 	}
-	effectiveSwapBytes, err := resolveSwap(observed, swap, kind == deployment.Install)
+	effectiveSwapBytes, err := resolveSwap(observed, desiredCore.Swap, kind == deployment.Install)
 	if err != nil {
 		return Prepared{}, err
 	}
@@ -269,9 +256,13 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	coreReq := deployment.CoreRequest{
 		Operation:          kind,
 		TargetID:           string(req.TargetID),
+		AdminUser:          target.SSHUser,
+		Domain:             desiredCore.Domain,
+		ACMEEmail:          desiredCore.ACMEEmail,
+		Secrets:            deploymentCoreSecrets(desiredCore.Secrets),
 		Source:             deployment.FrozenCoreSource{SourceID: string(source.ID), Version: source.Version, GitCommit: source.Commit, PackageSHA256: source.SHA256, PackageFS: source.FS},
-		SwapMode:           swap.Mode,
-		SwapSizeGiB:        swap.SizeGiB,
+		SwapMode:           desiredCore.Swap.Mode,
+		SwapSizeGiB:        desiredCore.Swap.SizeGiB,
 		EffectiveSwapBytes: effectiveSwapBytes,
 		ObservedArtifacts:  observedArtifactHashes(observed.Core.ManagedArtifacts),
 		BackupRequired:     kind == deployment.Update,
@@ -287,38 +278,100 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	if err != nil {
 		return Prepared{}, err
 	}
-	desiredCore := managementstate.CoreDesiredState{SourceID: source.ID, Version: source.Version, Swap: swap}
-	return Prepared{
-		Operation:     operation,
-		TargetID:      req.TargetID,
-		DesiredCore:   desiredCore,
-		PrimaryBefore: observed.Host.PrimaryHardening,
-	}, nil
+	desiredCore.SourceID = source.ID
+	desiredCore.Version = source.Version
+	desiredCore.CoreContract = operation.CoreContract
+	if kind == deployment.Restore && backup != nil && backup.Desired.CoreContract != "" && backup.Desired.CoreContract != operation.CoreContract {
+		return Prepared{}, errors.New("restored Core source core_contract does not match backed-up desired state")
+	}
+	return Prepared{Operation: operation, TargetID: req.TargetID, DesiredCore: desiredCore, PrimaryBefore: observed.Host.PrimaryHardening}, nil
 }
 
-func (l *Lifecycle) verifiedCoreBackup(ctx context.Context, req PrepareRequest, observed managementstate.ObservedState, kind deployment.OperationKind) (backuprestore.Manifest, error) {
+func desiredCoreForOperation(kind deployment.OperationKind, req PrepareRequest, current managementstate.CoreDesiredState, backup *verifiedBackup) (managementstate.CoreDesiredState, error) {
+	switch kind {
+	case deployment.Install:
+		desired := managementstate.CoreDesiredState{Domain: req.Configuration.Domain, ACMEEmail: req.Configuration.ACMEEmail, Secrets: req.Configuration.Secrets, Swap: req.Swap}
+		if desired.Swap.Mode == "" {
+			desired.Swap.Mode = "none"
+		}
+		return desired, nil
+	case deployment.Update, deployment.Validate:
+		if current.SourceID == "" {
+			return managementstate.CoreDesiredState{}, errors.New("installed Core has no canonical desired state")
+		}
+		return current, nil
+	case deployment.Reconfigure:
+		if current.SourceID == "" {
+			return managementstate.CoreDesiredState{}, errors.New("installed Core has no canonical desired state")
+		}
+		current.Swap = req.Swap
+		if current.Swap.Mode == "" {
+			current.Swap.Mode = "none"
+		}
+		return current, nil
+	case deployment.Restore:
+		if backup == nil || backup.Desired.SourceID == "" {
+			return managementstate.CoreDesiredState{}, errors.New("Core restore backup has no previous desired state")
+		}
+		return backup.Desired, nil
+	default:
+		return managementstate.CoreDesiredState{}, errors.New("unsupported Core operation")
+	}
+}
+
+func (l *Lifecycle) verifiedCoreBackup(ctx context.Context, req PrepareRequest, observed managementstate.ObservedState, kind deployment.OperationKind) (verifiedBackup, error) {
 	if req.BackupID == "" {
-		return backuprestore.Manifest{}, errors.New("Core update/restore requires a concrete verified Core backup")
+		return verifiedBackup{}, errors.New("Core update/restore requires a concrete verified Core backup")
 	}
 	inspection, err := l.backups.InspectArtifact(ctx, req.BackupID, managementstate.BackupCore, req.BackupPassphrase)
 	if err != nil {
-		return backuprestore.Manifest{}, fmt.Errorf("verify Core backup: %w", err)
+		return verifiedBackup{}, fmt.Errorf("verify Core backup: %w", err)
 	}
 	defer inspection.Close()
 	manifest := inspection.Manifest
 	if manifest.TargetID != req.TargetID || manifest.Identity == nil || manifest.Identity.SubjectKind != "core" {
-		return backuprestore.Manifest{}, errors.New("Core backup belongs to another target or subject")
+		return verifiedBackup{}, errors.New("Core backup belongs to another target or subject")
 	}
 	if kind == deployment.Update {
 		identity := manifest.Identity
 		if identity.SubjectID != string(observed.Core.SourceID) || identity.Version != observed.Core.Version || identity.PackageSHA256 != observed.Core.PackageSHA256 {
-			return backuprestore.Manifest{}, errors.New("Core update backup does not match the installed exact Core identity")
+			return verifiedBackup{}, errors.New("Core update backup does not match the installed exact Core identity")
 		}
 	}
-	return manifest, nil
+	desired, err := desiredCoreFromBackup(inspection)
+	if err != nil {
+		return verifiedBackup{}, err
+	}
+	if desired.SourceID != managementstate.SourceSnapshotID(manifest.Identity.SubjectID) || desired.Version != manifest.Identity.Version {
+		return verifiedBackup{}, errors.New("Core backup desired state identity does not match manifest")
+	}
+	return verifiedBackup{Manifest: manifest, Desired: desired}, nil
 }
 
-func candidateForOperation(kind deployment.OperationKind, req PrepareRequest, observed managementstate.ObservedState, backup *backuprestore.Manifest) (sourcelibrary.CoreCandidateRef, error) {
+func desiredCoreFromBackup(inspection *backuprestore.Inspection) (managementstate.CoreDesiredState, error) {
+	if inspection == nil || inspection.PayloadPath == "" {
+		return managementstate.CoreDesiredState{}, errors.New("validated Core backup payload is required")
+	}
+	root, err := os.MkdirTemp("", "vpsmith-core-backup-")
+	if err != nil {
+		return managementstate.CoreDesiredState{}, err
+	}
+	defer os.RemoveAll(root)
+	if err := backuprestore.ExtractTarZst(inspection.PayloadPath, root, backuprestore.ArchiveOptions{}); err != nil {
+		return managementstate.CoreDesiredState{}, fmt.Errorf("extract Core backup desired state: %w", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "management", "core-desired.json"))
+	if err != nil {
+		return managementstate.CoreDesiredState{}, fmt.Errorf("read Core backup desired state: %w", err)
+	}
+	var desired managementstate.CoreDesiredState
+	if err := json.Unmarshal(data, &desired); err != nil {
+		return managementstate.CoreDesiredState{}, fmt.Errorf("decode Core backup desired state: %w", err)
+	}
+	return desired, nil
+}
+
+func candidateForOperation(kind deployment.OperationKind, req PrepareRequest, observed managementstate.ObservedState, backup *verifiedBackup) (sourcelibrary.CoreCandidateRef, error) {
 	switch kind {
 	case deployment.Install, deployment.Update:
 		return req.Candidate, nil
@@ -328,13 +381,13 @@ func candidateForOperation(kind deployment.OperationKind, req PrepareRequest, ob
 		}
 		return sourcelibrary.CoreCandidateRef{SnapshotID: observed.Core.SourceID}, nil
 	case deployment.Restore:
-		if backup == nil || backup.Identity == nil || backup.Identity.SubjectID == "" {
+		if backup == nil || backup.Manifest.Identity == nil || backup.Manifest.Identity.SubjectID == "" {
 			return sourcelibrary.CoreCandidateRef{}, errors.New("Core restore backup has no previous source identity")
 		}
 		if req.Candidate.SnapshotID != "" || req.Candidate.WorkspaceID != "" {
 			return sourcelibrary.CoreCandidateRef{}, errors.New("Core restore source is selected by the verified backup")
 		}
-		return sourcelibrary.CoreCandidateRef{SnapshotID: managementstate.SourceSnapshotID(backup.Identity.SubjectID)}, nil
+		return sourcelibrary.CoreCandidateRef{SnapshotID: managementstate.SourceSnapshotID(backup.Manifest.Identity.SubjectID)}, nil
 	default:
 		return sourcelibrary.CoreCandidateRef{}, errors.New("unsupported Core operation")
 	}
@@ -346,6 +399,28 @@ func backupMatchesSource(manifest backuprestore.Manifest, source sourcelibrary.F
 		return errors.New("Core restore source does not match the verified backup identity")
 	}
 	return nil
+}
+
+func requireCoreSecretReferences(snapshot managementstate.Snapshot, refs managementstate.CoreSecretReferences) error {
+	available := make(map[managementstate.SecretID]bool, len(snapshot.Secrets))
+	for _, secret := range snapshot.Secrets {
+		available[secret.ID] = secret.IsSet
+	}
+	for _, id := range refs.IDs() {
+		if id == "" || !available[id] {
+			return errors.New("Core requires all referenced Authelia secrets to exist and be set")
+		}
+	}
+	return nil
+}
+
+func deploymentCoreSecrets(refs managementstate.CoreSecretReferences) deployment.CoreSecretIDs {
+	return deployment.CoreSecretIDs{
+		AutheliaSession:       string(refs.AutheliaSession),
+		AutheliaStorage:       string(refs.AutheliaStorage),
+		AutheliaResetPassword: string(refs.AutheliaResetPassword),
+		AutheliaUsersDatabase: string(refs.AutheliaUsersDatabase),
+	}
 }
 
 func resolveSwap(observed managementstate.ObservedState, swap managementstate.SwapDesiredState, installing bool) (int64, error) {
@@ -481,19 +556,8 @@ func (p corePayloadProducer) Produce(ctx context.Context, root string) (backupre
 	if err := os.WriteFile(filepath.Join(managementDir, "core-desired.json"), desiredBytes, 0o600); err != nil {
 		return backuprestore.PayloadDescriptor{}, err
 	}
-	identity := &backuprestore.ArtifactIdentity{
-		SubjectKind:             "core",
-		SubjectID:               string(p.observed.Core.SourceID),
-		Version:                 p.observed.Core.Version,
-		PackageSHA256:           p.observed.Core.PackageSHA256,
-		StoragePaths:            append([]string(nil), p.copy.DeclaredPath...),
-		PreviousDesiredStateRef: "management/core-desired.json",
-		ExecutionBundleRef:      p.bundleRef,
-	}
-	descriptor := backuprestore.PayloadDescriptor{
-		Identity:   identity,
-		SourceRefs: []string{string(p.observed.Core.SourceID)},
-	}
+	identity := &backuprestore.ArtifactIdentity{SubjectKind: "core", SubjectID: string(p.observed.Core.SourceID), Version: p.observed.Core.Version, PackageSHA256: p.observed.Core.PackageSHA256, StoragePaths: append([]string(nil), p.copy.DeclaredPath...), PreviousDesiredStateRef: "management/core-desired.json", ExecutionBundleRef: p.bundleRef}
+	descriptor := backuprestore.PayloadDescriptor{Identity: identity, SourceRefs: []string{string(p.observed.Core.SourceID)}}
 	if p.bundleRef != "" {
 		descriptor.BundleRefs = []string{p.bundleRef}
 	}
