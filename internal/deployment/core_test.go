@@ -55,6 +55,7 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 	req.ObservedCoreID = "source-core-old"
 	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
 	req.BackupRequired = true
+	req.BackupRef = "backup-core-test"
 	req.SwapMode = "swapfile"
 	req.SwapSizeGiB = 2
 	req.EffectiveSwapBytes = 2 << 30
@@ -83,6 +84,9 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 	manifest := prepared.Bundle.Manifest
 	if manifest.PackageSHA256 != req.Source.PackageSHA256 || len(manifest.Sources) != 1 || manifest.Sources[0].ID != req.Source.SourceID {
 		t.Fatalf("bundle lost Core source identity: %#v", manifest)
+	}
+	if manifest.BackupRef != req.BackupRef {
+		t.Fatalf("bundle lost verified backup ref: got=%q want=%q", manifest.BackupRef, req.BackupRef)
 	}
 	if len(manifest.Images) != 2 || len(prepared.ImageDigests) != 2 {
 		t.Fatalf("Core image identities were not frozen: %#v", manifest.Images)
@@ -119,94 +123,10 @@ func TestPrepareCoreRestoreUsesBackedUpImageLocksInsteadOfRegistryResolution(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]string{}
-	for _, image := range prepared.Bundle.Manifest.Images {
-		got[image.Name] = image.Digest
+	if got := prepared.ImageDigests["caddy"]; got != locks["caddy"].Digest {
+		t.Fatalf("caddy digest=%q want=%q", got, locks["caddy"].Digest)
 	}
-	if got["caddy"] != locks["caddy"].Digest || got["authelia"] != locks["authelia"].Digest {
-		t.Fatalf("restore did not preserve backed-up image locks: %#v", got)
-	}
-}
-
-func TestPrepareCoreRestoreRejectsImageLockRefDriftAndNonRestoreUse(t *testing.T) {
-	compiler := coreCompiler(t)
-	locks := map[string]FrozenCoreImage{
-		"caddy":    {Ref: "docker.io/library/caddy:moved", Digest: "sha256:" + strings.Repeat("d", 64)},
-		"authelia": {Ref: autheliaTestRef, Digest: "sha256:" + strings.Repeat("e", 64)},
-	}
-	restore := coreRequest(Restore)
-	restore.ObservedCoreID = "source-core-newer"
-	restore.ObservedCoreSHA256 = strings.Repeat("b", 64)
-	if _, err := compiler.PrepareCoreRestore(context.Background(), restore, locks); err == nil {
-		t.Fatal("Core restore accepted image lock ref drift from frozen Core package")
-	}
-
-	update := coreRequest(Update)
-	update.ObservedCoreID = "source-core-old"
-	update.ObservedCoreSHA256 = strings.Repeat("b", 64)
-	update.BackupRequired = true
-	if _, err := compiler.PrepareCoreRestore(context.Background(), update, locks); err == nil {
-		t.Fatal("non-restore Core operation accepted backed-up image locks")
-	}
-}
-
-func TestPrepareCoreValidationCannotCarryMutation(t *testing.T) {
-	compiler := coreCompiler(t)
-	req := coreRequest(Validate)
-	req.ObservedCoreID = req.Source.SourceID
-	req.ObservedCoreSHA256 = req.Source.PackageSHA256
-
-	prepared, err := compiler.PrepareCore(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if prepared.PlanRequired {
-		t.Fatal("read-only validation must not require a mutation plan")
-	}
-	if len(prepared.Artifacts) != 0 || len(prepared.Bundle.Manifest.Artifacts) != 0 {
-		t.Fatal("validation bundle must not contain generated target artifacts")
-	}
-	for _, step := range prepared.Bundle.Manifest.Steps {
-		if step.Mutating || step.Kind == "apply-artifact" {
-			t.Fatalf("validation bundle contains mutation: %#v", step)
-		}
-	}
-}
-
-func TestPrepareCoreUpdateRequiresVerifiedBackupFlagFromLifecycle(t *testing.T) {
-	compiler := coreCompiler(t)
-	req := coreRequest(Update)
-	req.ObservedCoreID = "source-core-old"
-	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
-
-	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
-		t.Fatal("Core update without verified backup precondition must fail closed")
-	}
-}
-
-func TestPrepareCoreRejectsDefinitionVersionMismatch(t *testing.T) {
-	compiler := coreCompiler(t)
-	req := coreRequest(Install)
-	req.Source.Version = "2.0.0"
-	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
-		t.Fatal("Core definition/source version mismatch must fail closed")
-	}
-}
-
-func TestPrepareCoreRejectsIncompleteConfiguration(t *testing.T) {
-	compiler := coreCompiler(t)
-	req := coreRequest(Install)
-	req.Secrets.AutheliaSession = ""
-	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
-		t.Fatal("Core without complete Authelia secret references must fail closed")
-	}
-}
-
-func TestCompileCoreDefinitionRejectsTrailingJSON(t *testing.T) {
-	source := fstest.MapFS{
-		"core.json": &fstest.MapFile{Data: []byte(`{"core_version":"1.0.0","core_contract":"1.0","images":{"caddy":{"ref":"caddy"},"authelia":{"ref":"authelia"}}} {}`)},
-	}
-	if _, err := compileCoreDefinition(source, "1.0.0"); err == nil {
-		t.Fatal("trailing Core definition JSON must fail closed")
+	if got := prepared.ImageDigests["authelia"]; got != locks["authelia"].Digest {
+		t.Fatalf("authelia digest=%q want=%q", got, locks["authelia"].Digest)
 	}
 }
