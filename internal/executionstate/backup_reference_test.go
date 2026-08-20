@@ -21,13 +21,13 @@ func TestRegisterBundlePersistsConcreteBackupReference(t *testing.T) {
 	}
 
 	run := execution.Run{
-		ID: "run_update",
-		TargetID: "target_1",
-		BundleID: "bundle_update",
+		ID:           "run_update",
+		TargetID:     "target_1",
+		BundleID:     "bundle_update",
 		BundleSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Kind: "migration",
-		Version: "2.0.0",
-		BackupRef: "backup_core_immediate",
+		Kind:         "migration",
+		Version:      "2.0.0",
+		BackupRef:    "backup_core_immediate",
 	}
 	if err := adapter.RegisterBundle(ctx, run); err != nil {
 		t.Fatal(err)
