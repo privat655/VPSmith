@@ -31,7 +31,7 @@ func TestExecuteRestoreWrongPassphraseBlocksBeforeTargetMutation(t *testing.T) {
 	storage.calls = nil
 	lifecycle.executor = &execution.Executor{}
 	prepared := Prepared{
-		TargetID: targetID,
+		TargetID:  targetID,
 		Operation: deployment.PreparedCoreOperation{PreparedOperation: deployment.PreparedOperation{Operation: deployment.Restore}},
 	}
 	prepared.Operation.Bundle.ID = "bundle_restore_test"
