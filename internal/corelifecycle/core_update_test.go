@@ -160,6 +160,11 @@ func seedSuccessfulCoreBundle(t *testing.T, lifecycle *Lifecycle, targetID manag
 	}); err != nil {
 		t.Fatal(err)
 	}
+	inspector := lifecycle.inspector.(coreBackupTestInspector)
+	inspector.observed.Core.ExecutionProofs = append(inspector.observed.Core.ExecutionProofs, managementstate.ExecutionProofObservedState{
+		ID: "proof_core_v1", BundleID: "bundle_core_v1", Outcome: "success",
+	})
+	lifecycle.inspector = inspector
 }
 
 func coreUpdateFS(version, contract string) fs.FS {
