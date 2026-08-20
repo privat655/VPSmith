@@ -59,13 +59,18 @@ healthcheck:
   container: app
   command: ["true"]
 service_checks: []
+validation_action: validate
 interfaces: []
 dependencies: []
-actions: {}
+actions:
+  validate: actions/validate.sh
 update_from: {}
 uninstall:
   delete_persistent_data: false
   delete_secrets: false
 `
-	return fstest.MapFS{"module.yaml": &fstest.MapFile{Data: []byte(yaml)}}
+	return fstest.MapFS{
+		"module.yaml":         &fstest.MapFile{Data: []byte(yaml)},
+		"actions/validate.sh": &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n"), Mode: 0o755},
+	}
 }
