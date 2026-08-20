@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -218,6 +219,9 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	if kind != deployment.Install && !observed.Core.Present {
 		return Prepared{}, errors.New("Core is not installed")
 	}
+	if err := requireSteadyCoreBeforeMutation(snapshot, target, observed, kind); err != nil {
+		return Prepared{}, err
+	}
 
 	var backup *verifiedBackup
 	if kind == deployment.Update || kind == deployment.Restore {
@@ -277,6 +281,9 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	}
 	operation, err := l.compiler.PrepareCore(ctx, coreReq)
 	if err != nil {
+		return Prepared{}, err
+	}
+	if err := requireDNSARecord(ctx, net.DefaultResolver, "auth."+desiredCore.Domain, target.Address); err != nil {
 		return Prepared{}, err
 	}
 	if kind == deployment.Update || kind == deployment.Restore {
