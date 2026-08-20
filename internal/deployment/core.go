@@ -89,8 +89,8 @@ type generatedCoreDesired struct {
 	Images             map[string]generatedCoreImage `json:"images"`
 	Secrets            generatedCoreSecrets          `json:"secrets"`
 	SwapMode           string                        `json:"swap_mode"`
-	SwapSizeGiB        int                           `json:"swap_size_gib,omitempty"`
-	EffectiveSwapBytes int64                         `json:"effective_swap_bytes,omitempty"`
+	SwapSizeGiB        int                           `json:"swap_size_gib"`
+	EffectiveSwapBytes int64                         `json:"effective_swap_bytes"`
 }
 
 // PrepareCore freezes one Core candidate into the same immutable execution
