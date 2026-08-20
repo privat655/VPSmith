@@ -17,7 +17,7 @@ import (
 	"github.com/privat655/VPSmith/internal/managementstate"
 )
 
-func TestExecuteRestoreCommitsNoLocalStateWhenBackedUpSecretReconciliationFails(t *testing.T) {
+func TestExecuteRestoreRejectsIncompleteBackedUpSecretsBeforeTargetMutation(t *testing.T) {
 	ctx := context.Background()
 	lifecycle, _, storage, targetID, passphrase := newCoreBackupTestLifecycle(t)
 	refs, backedUpValues := installRestoreTestSecrets(t, lifecycle, targetID)
@@ -72,6 +72,9 @@ func TestExecuteRestoreCommitsNoLocalStateWhenBackedUpSecretReconciliationFails(
 	if err == nil || !strings.Contains(err.Error(), "read restored Core secret") {
 		t.Fatalf("restore with incomplete backed-up secret set error=%v", err)
 	}
+	if target.starts != 0 || len(storage.calls) != 0 {
+		t.Fatalf("incomplete Core restore reached target mutation: starts=%d storage=%#v", target.starts, storage.calls)
+	}
 	after, err := lifecycle.state.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +88,7 @@ func TestExecuteRestoreCommitsNoLocalStateWhenBackedUpSecretReconciliationFails(
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(afterTarget.Desired, beforeTarget.Desired) || !reflect.DeepEqual(afterTarget.Observed, beforeTarget.Observed) {
-		t.Fatalf("failed local restore reconciliation partially committed Management State: before=%#v after=%#v", beforeTarget, afterTarget)
+		t.Fatalf("rejected Core restore changed Management State: before=%#v after=%#v", beforeTarget, afterTarget)
 	}
 }
 
