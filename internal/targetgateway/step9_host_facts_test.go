@@ -3,6 +3,7 @@ package targetgateway
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -11,10 +12,14 @@ func TestProductionInspectionReportsEffectiveCoreHostFacts(t *testing.T) {
 	runner := &captureRunner{}
 	runner.hook = func(name string, args []string) ([]byte, []byte, error) {
 		command := args[len(args)-1]
-		if isStep9HostFactsCommand(command) {
+		switch {
+		case strings.HasPrefix(command, "set -eu\nhostname="):
+			return []byte("hostname\tvps-1\nkernel\tLinux 6.8\nos_id\tubuntu\nos_version\t24.04\nroot_total\t100000000000\nroot_available\t50000000000\nmem_total\t8589934592\nmem_available\t4294967296\nswap_total\t3221225472\nswap_free\t3221221376\nreboot\t0\nufw\t1\nfail2ban\t1\n"), nil, nil
+		case isStep9HostFactsCommand(command):
 			return []byte(step9HostFactsFixture), nil, nil
+		default:
+			return base(name, args)
 		}
-		return base(name, args)
 	}
 	transport := newSSHTransportAt(t.TempDir(), runner)
 	key := testHostObservation(4)
