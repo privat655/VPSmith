@@ -24,7 +24,9 @@ func TestCorePostValidationRequiresEffectiveHostRuntimeContract(t *testing.T) {
 		{"journald", func(v *managementstate.ObservedState) { v.Host.SecondaryHardening.JournalSystemMaxUseBytes = 300 << 20 }, "Secondary Host Hardening"},
 		{"low ports", func(v *managementstate.ObservedState) { v.Host.SecondaryHardening.UnprivilegedPortStart = 0 }, "Secondary Host Hardening"},
 		{"docker", func(v *managementstate.ObservedState) { v.Host.SecondaryHardening.DockerAbsent = false }, "Secondary Host Hardening"},
-		{"public high port", func(v *managementstate.ObservedState) { v.Host.Listeners[2] = managementstate.ListenerObservedState{Address: "0.0.0.0", Port: 8080, Public: true, Protocol: "tcp"} }, "listener"},
+		{"public high port", func(v *managementstate.ObservedState) {
+			v.Host.Listeners[2] = managementstate.ListenerObservedState{Address: "0.0.0.0", Port: 8080, Public: true, Protocol: "tcp"}
+		}, "listener"},
 		{"missing public https", func(v *managementstate.ObservedState) { v.Host.Listeners = v.Host.Listeners[:3] }, "listener"},
 		{"swapfile missing", func(v *managementstate.ObservedState) { v.Host.SwapDevices = nil }, "swap"},
 		{"swapfile wrong size", func(v *managementstate.ObservedState) { v.Host.SwapDevices[0].SizeBytes = 1 << 30 }, "swap"},
@@ -102,8 +104,8 @@ func validCorePostState() (Prepared, managementstate.ObservedState) {
 		CloudInit: managementstate.CloudInitObservedState{Present: true, Status: "ok"},
 		Core: managementstate.CoreObservedState{
 			Present: true, SourceID: "core-source", Version: "1.0.0", PackageSHA256: packageSHA, Running: true,
-			Podman: managementstate.PodmanObservedState{Present: true, Rootless: true, CgroupVersion: "v2", RootlessNetworkCmd: "pasta"},
-			Caddy: managementstate.ServiceObservedState{Present: true, Running: true, ConfigChecked: true, ConfigValid: true},
+			Podman:   managementstate.PodmanObservedState{Present: true, Rootless: true, CgroupVersion: "v2", RootlessNetworkCmd: "pasta"},
+			Caddy:    managementstate.ServiceObservedState{Present: true, Running: true, ConfigChecked: true, ConfigValid: true},
 			Authelia: managementstate.ServiceObservedState{Present: true, Running: true},
 		},
 	}
