@@ -102,6 +102,20 @@ func TestCaptureCoreImageLocksFailsClosedOnIdentityMismatch(t *testing.T) {
 	}
 }
 
+func TestRequireCoreBackupReadyRejectsSourceCatalogVersionMismatch(t *testing.T) {
+	_, observed := validCorePostState()
+	target := managementstate.Target{Desired: managementstate.DesiredState{Core: managementstate.CoreDesiredState{
+		SourceID: "core-source", Version: "1.0.0", CoreContract: "1",
+		Swap: managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
+	}}}
+	snapshot := managementstate.Snapshot{Sources: managementstate.SourceState{Artifacts: []managementstate.SourceArtifact{{
+		ID: "core-source", Kind: managementstate.SourceCore, Version: "0.9.0", SHA256: strings.Repeat("a", 64),
+	}}}}
+	if err := requireCoreBackupReady(snapshot, target, observed); err == nil || !strings.Contains(err.Error(), "source version") {
+		t.Fatalf("Core backup source version mismatch error=%v", err)
+	}
+}
+
 func containsStringValue(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
