@@ -1,11 +1,22 @@
 package corelifecycle
 
-import "github.com/privat655/VPSmith/internal/managementstate"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-// coreBackupStoragePaths contains only target-side Core state that is
-// canonical or not reproducible. Generated Caddy, Authelia policy, Quadlet,
-// network, and host-hardening files are deliberately absent: restore rebuilds
-// those artifacts from desired state through the Deployment Compiler.
+	"github.com/privat655/VPSmith/internal/managementstate"
+)
+
+const coreBackupImageLocksRef = "management/core-image-locks.json"
+
+// coreBackupStoragePaths contains the target-side inputs needed to construct a
+// canonical Core backup. The generated desired.json is evidence only: the
+// producer extracts its exact image locks and removes the generated document
+// from the long-term payload before the envelope is created.
 func coreBackupStoragePaths() []string {
 	return []string{
 		"/var/lib/vpsmith/core/desired.json",
@@ -16,18 +27,71 @@ func coreBackupStoragePaths() []string {
 	}
 }
 
-type coreBackupRuntimeIdentity struct {
-	SourceID      managementstate.SourceSnapshotID         `json:"source_id"`
-	Version       string                                   `json:"version"`
-	PackageSHA256 string                                   `json:"package_sha256"`
-	Containers    []managementstate.ContainerObservedState `json:"containers,omitempty"`
+type coreBackupImage struct {
+	Ref    string `json:"ref"`
+	Digest string `json:"digest"`
 }
 
-func coreRuntimeIdentity(observed managementstate.ObservedState) coreBackupRuntimeIdentity {
-	return coreBackupRuntimeIdentity{
-		SourceID:      observed.Core.SourceID,
-		Version:       observed.Core.Version,
-		PackageSHA256: observed.Core.PackageSHA256,
-		Containers:    append([]managementstate.ContainerObservedState(nil), observed.Core.Containers...),
+type coreBackupImageLocks struct {
+	SourceID      managementstate.SourceSnapshotID `json:"source_id"`
+	Version       string                           `json:"version"`
+	PackageSHA256 string                           `json:"package_sha256"`
+	Images        map[string]coreBackupImage       `json:"images"`
+}
+
+func captureCoreImageLocks(root string, observed managementstate.ObservedState) (coreBackupImageLocks, error) {
+	path := filepath.Join(root, "var", "lib", "vpsmith", "core", "desired.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return coreBackupImageLocks{}, fmt.Errorf("read backed-up Core execution lock: %w", err)
 	}
+	var lock coreBackupImageLocks
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return coreBackupImageLocks{}, fmt.Errorf("decode backed-up Core execution lock: %w", err)
+	}
+	if lock.SourceID != observed.Core.SourceID || lock.Version != observed.Core.Version || lock.PackageSHA256 != observed.Core.PackageSHA256 {
+		return coreBackupImageLocks{}, errors.New("backed-up Core execution lock does not match observed exact Core identity")
+	}
+	if len(lock.Images) != 2 {
+		return coreBackupImageLocks{}, errors.New("backed-up Core execution lock must contain exactly Caddy and Authelia images")
+	}
+	for _, name := range []string{"caddy", "authelia"} {
+		image, ok := lock.Images[name]
+		if !ok || strings.TrimSpace(image.Ref) == "" || !validCoreImageDigest(image.Digest) {
+			return coreBackupImageLocks{}, fmt.Errorf("backed-up Core execution lock has incomplete %s image identity", name)
+		}
+	}
+	if err := os.Remove(path); err != nil {
+		return coreBackupImageLocks{}, fmt.Errorf("remove generated Core desired document from canonical backup payload: %w", err)
+	}
+	return lock, nil
+}
+
+func writeCoreImageLocks(root string, locks coreBackupImageLocks) error {
+	managementDir := filepath.Join(root, "management")
+	if err := os.MkdirAll(managementDir, 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(locks, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(coreBackupImageLocksRef)), data, 0o600); err != nil {
+		return fmt.Errorf("write Core image locks: %w", err)
+	}
+	return nil
+}
+
+func validCoreImageDigest(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
+		return false
+	}
+	for _, r := range strings.TrimPrefix(value, "sha256:") {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }
