@@ -12,8 +12,7 @@ func TestRequireSteadyCoreBeforeMutationRejectsEffectiveDrift(t *testing.T) {
 	_, observed := validCorePostState()
 	observed.Host.RootFilesystem.AvailableBytes = 20 << 30
 	snapshot := managementstate.Snapshot{Sources: managementstate.SourceState{Artifacts: []managementstate.SourceArtifact{{
-		ID: "core-source", Kind: managementstate.SourceCore, Version: "1.0.0", PackageSHA256: "",
-		SHA256: strings.Repeat("a", 64),
+		ID: "core-source", Kind: managementstate.SourceCore, Version: "1.0.0", SHA256: strings.Repeat("a", 64),
 	}}}}
 	target := managementstate.Target{Desired: managementstate.DesiredState{Core: managementstate.CoreDesiredState{
 		SourceID: "core-source", Version: "1.0.0", CoreContract: "1",
