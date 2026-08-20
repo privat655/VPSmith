@@ -2,17 +2,16 @@ package deployment
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
-	"sort"
 	"strings"
 
 	"github.com/privat655/VPSmith/internal/executionbundle"
 )
+
+const coreDesiredTarget = "/var/lib/vpsmith/core/desired.json"
 
 // FrozenCoreSource is the exact immutable Core package selected by the Source Library.
 type FrozenCoreSource struct {
@@ -23,21 +22,33 @@ type FrozenCoreSource struct {
 	PackageFS     fs.FS
 }
 
-// CoreRequest is deliberately smaller than the module compiler request. Core
-// owns host/platform infrastructure, not application topology.
+// CoreRequest contains only frozen facts. Detection belongs to CoreLifecycle
+// and TargetInspector; generation belongs here.
 type CoreRequest struct {
-	Operation      OperationKind
-	TargetID       string
-	Source         FrozenCoreSource
-	ObservedCoreID string
-	SwapMode       string
-	SwapSizeGiB    int
-	BackupRequired bool
+	Operation          OperationKind
+	TargetID           string
+	Source             FrozenCoreSource
+	ObservedCoreID     string
+	ObservedCoreSHA256 string
+	ObservedArtifacts  map[string]string
+	SwapMode           string
+	SwapSizeGiB        int
+	EffectiveSwapBytes int64
+	BackupRequired     bool
 }
 
-// PrepareCore freezes one Core package into the same immutable execution-bundle
-// format used by every structural VPSmith operation. The package owns its
-// scripts and generated files; the target runner remains generic.
+type generatedCoreDesired struct {
+	SourceID           string `json:"source_id"`
+	Version            string `json:"version"`
+	PackageSHA256      string `json:"package_sha256"`
+	SwapMode           string `json:"swap_mode"`
+	SwapSizeGiB        int    `json:"swap_size_gib,omitempty"`
+	EffectiveSwapBytes int64  `json:"effective_swap_bytes,omitempty"`
+}
+
+// PrepareCore freezes one Core candidate into the same immutable execution
+// bundle used by all structural VPSmith operations. The target runner stays
+// generic; it never contains a second Core installer.
 func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOperation, error) {
 	if err := ctx.Err(); err != nil {
 		return PreparedOperation{}, err
@@ -51,16 +62,16 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 	if strings.TrimSpace(req.TargetID) == "" || strings.TrimSpace(req.Source.SourceID) == "" || strings.TrimSpace(req.Source.Version) == "" || !validSHA256(req.Source.PackageSHA256) || req.Source.PackageFS == nil {
 		return PreparedOperation{}, errors.New("complete frozen Core source identity is required")
 	}
-	if req.Operation == Install && req.ObservedCoreID != "" {
+	if req.Operation == Install && (req.ObservedCoreID != "" || req.ObservedCoreSHA256 != "") {
 		return PreparedOperation{}, errors.New("Core install requires Core to be absent")
 	}
-	if req.Operation != Install && req.ObservedCoreID == "" {
-		return PreparedOperation{}, errors.New("Core mutation requires an installed Core identity")
+	if req.Operation != Install && (req.ObservedCoreID == "" || !validSHA256(req.ObservedCoreSHA256)) {
+		return PreparedOperation{}, errors.New("Core mutation requires the installed exact Core identity")
 	}
 	if req.Operation == Update && !req.BackupRequired {
 		return PreparedOperation{}, errors.New("Core update requires a verified backup precondition")
 	}
-	if err := validateCoreSwap(req.SwapMode, req.SwapSizeGiB); err != nil {
+	if err := validateCoreSwap(req.SwapMode, req.SwapSizeGiB, req.EffectiveSwapBytes); err != nil {
 		return PreparedOperation{}, err
 	}
 
@@ -68,99 +79,165 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedOp
 	if err != nil {
 		return PreparedOperation{}, err
 	}
-	artifacts, files, err := coreArtifacts(req.Source.PackageFS)
+	artifacts := []GeneratedArtifact{}
+	files := []executionbundle.File{}
+	if req.Operation != Validate {
+		desired, err := generateCoreDesired(req)
+		if err != nil {
+			return PreparedOperation{}, err
+		}
+		artifacts = append(artifacts, desired)
+		files = append(files, executionbundle.File{Path: desired.Path, TargetPath: desired.TargetPath, Mode: desired.Mode, Data: desired.Data})
+	}
+
+	preconditions := []executionbundle.Precondition{{Kind: "target", Subject: req.TargetID, Expected: "same-target"}}
+	if req.Operation != Install {
+		preconditions = append(preconditions,
+			executionbundle.Precondition{Kind: "core-source-id", Subject: "installed", Expected: req.ObservedCoreID},
+			executionbundle.Precondition{Kind: "core-package-sha256", Subject: "installed", Expected: req.ObservedCoreSHA256},
+		)
+	}
+	for _, artifact := range artifacts {
+		if current := req.ObservedArtifacts[artifact.TargetPath]; current != "" {
+			if !validSHA256(current) {
+				return PreparedOperation{}, fmt.Errorf("invalid observed artifact sha256 for %s", artifact.TargetPath)
+			}
+			preconditions = append(preconditions, executionbundle.Precondition{Kind: "artifact-sha256", Subject: artifact.TargetPath, Expected: current})
+		}
+	}
+
+	plan := corePlan(req.Operation)
+	steps := make([]executionbundle.Step, 0, len(artifacts)+len(actions))
+	for _, artifact := range artifacts {
+		steps = append(steps, executionbundle.Step{ID: "apply-core-desired", Kind: "apply-artifact", Artifact: artifact.Path, Mutating: true})
+	}
+	for _, id := range actionIDs {
+		steps = append(steps, executionbundle.Step{ID: id, Kind: "action", Action: id, Mutating: req.Operation != Validate})
+	}
+	validations := []executionbundle.ValidationSpec{{ID: "core-complete", ReadOnly: true}}
+	post := map[string]any{
+		"target_id":           req.TargetID,
+		"core_source_id":      req.Source.SourceID,
+		"core_version":        req.Source.Version,
+		"core_package_sha256": req.Source.PackageSHA256,
+		"artifacts":           artifactPostState(artifacts),
+	}
+	bundleKind := executionbundle.Migration
+	switch req.Operation {
+	case Install:
+		bundleKind = executionbundle.Installation
+	case Validate:
+		bundleKind = executionbundle.Validation
+	}
+	sourceIdentity := executionbundle.SourceIdentity{Kind: "core", ID: req.Source.SourceID, Version: req.Source.Version, GitCommit: req.Source.GitCommit, PackageSHA256: req.Source.PackageSHA256}
+	bundle, err := c.bundles.Assemble(executionbundle.Input{
+		Kind:            bundleKind,
+		TargetID:        req.TargetID,
+		SubjectKind:     "core",
+		SubjectID:       "core",
+		SubjectIdentity: req.Source.SourceID,
+		PackageSHA256:   req.Source.PackageSHA256,
+		Version:         req.Source.Version,
+		Sources:         []executionbundle.SourceIdentity{sourceIdentity},
+		Files:           files,
+		Actions:         actions,
+		ActionIDs:       actionIDs,
+		Preconditions:   preconditions,
+		ExpectedPost:    post,
+		Validations:     validations,
+		Steps:           steps,
+		BackupRequired:  req.BackupRequired,
+	})
 	if err != nil {
 		return PreparedOperation{}, err
 	}
-	pre := []executionbundle.Precondition{{Kind: "target", Subject: req.TargetID, Expected: "same-target"}}
-	if req.Operation != Install {
-		pre = append(pre, executionbundle.Precondition{Kind: "core", Subject: "installed", Expected: req.ObservedCoreID})
-	}
-	plan := corePlan(req.Operation)
-	steps := make([]executionbundle.Step, 0, len(actions)+len(files))
-	for _, a := range artifacts {
-		steps = append(steps, executionbundle.Step{ID: "apply-" + safeStepID(a.Path), Kind: "apply-artifact", Artifact: a.Path, Mutating: req.Operation != Validate})
-	}
-	for _, id := range actionIDs {
-		steps = append(steps, executionbundle.Step{ID: id, Kind: "action", Action: id, Args: []string{req.SwapMode, fmt.Sprintf("%d", req.SwapSizeGiB)}, Mutating: req.Operation != Validate})
-	}
-	validations := []executionbundle.ValidationSpec{{ID: "core-complete", ReadOnly: true}}
-	post := map[string]any{"target_id": req.TargetID, "core_source_id": req.Source.SourceID, "core_version": req.Source.Version, "core_package_sha256": req.Source.PackageSHA256, "artifacts": artifactPostState(artifacts)}
-	kind := executionbundle.Migration
-	if req.Operation == Install { kind = executionbundle.Installation }
-	if req.Operation == Validate { kind = executionbundle.Validation }
-	bundle, err := c.bundles.Assemble(executionbundle.Input{
-		Kind: kind, TargetID: req.TargetID, SubjectKind: "core", SubjectID: "core",
-		SubjectIdentity: req.Source.SourceID, PackageSHA256: req.Source.PackageSHA256, Version: req.Source.Version,
-		Sources: []executionbundle.SourceIdentity{{Kind: "core", ID: req.Source.SourceID, Version: req.Source.Version, GitCommit: req.Source.GitCommit, PackageSHA256: req.Source.PackageSHA256}},
-		Files: files, Actions: actions, ActionIDs: actionIDs, Preconditions: pre, ExpectedPost: post,
-		Validations: validations, Steps: steps, BackupRequired: req.BackupRequired,
-	})
-	if err != nil { return PreparedOperation{}, err }
-	return PreparedOperation{Operation: req.Operation, PlanRequired: req.Operation != Validate, Plan: plan, Preconditions: pre, ExpectedPost: post, Validations: validations, Artifacts: artifacts, Bundle: bundle}, nil
+	return PreparedOperation{
+		Operation:    req.Operation,
+		PlanRequired: req.Operation != Validate,
+		Plan:         plan,
+		FrozenSources: []FrozenIdentity{{
+			InstanceID:    "core",
+			ModuleID:      "core",
+			Version:       req.Source.Version,
+			SourceID:      req.Source.SourceID,
+			GitCommit:     req.Source.GitCommit,
+			PackageSHA256: req.Source.PackageSHA256,
+		}},
+		ImageDigests:  map[string]string{},
+		Artifacts:     artifacts,
+		Preconditions: preconditions,
+		ExpectedPost:  post,
+		Validations:   validations,
+		Bundle:        bundle,
+	}, nil
 }
 
-func validateCoreSwap(mode string, size int) error {
+func generateCoreDesired(req CoreRequest) (GeneratedArtifact, error) {
+	data, err := json.Marshal(generatedCoreDesired{
+		SourceID:           req.Source.SourceID,
+		Version:            req.Source.Version,
+		PackageSHA256:      req.Source.PackageSHA256,
+		SwapMode:           req.SwapMode,
+		SwapSizeGiB:        req.SwapSizeGiB,
+		EffectiveSwapBytes: req.EffectiveSwapBytes,
+	})
+	if err != nil {
+		return GeneratedArtifact{}, err
+	}
+	data = append(data, '\n')
+	return artifact("generated/core-desired.json", coreDesiredTarget, 0o400, data), nil
+}
+
+func validateCoreSwap(mode string, sizeGiB int, effectiveBytes int64) error {
 	switch mode {
 	case "none", "preserve-existing":
-		if size != 0 { return errors.New("Core swap size is only valid for swapfile") }
+		if sizeGiB != 0 || effectiveBytes != 0 {
+			return errors.New("Core swap size is only valid for swapfile")
+		}
 	case "swapfile":
-		if size < 0 { return errors.New("Core swap size must be auto or a positive GiB value") }
+		if sizeGiB < 0 || effectiveBytes <= 0 {
+			return errors.New("Core swapfile requires a resolved positive size")
+		}
 	default:
 		return errors.New("Core swap mode must be none, swapfile, or preserve-existing")
 	}
 	return nil
 }
 
-func corePlan(op OperationKind) []PlanStep {
-	if op == Validate { return []PlanStep{{ID: "validate", Description: "Core vollständig read-only validieren", Mutating: false}} }
+func corePlan(operation OperationKind) []PlanStep {
+	if operation == Validate {
+		return []PlanStep{{ID: "validate", Description: "Core vollständig read-only validieren", Mutating: false}}
+	}
 	return []PlanStep{
-		{ID:"preflight", Description:"Cloud-init und Core-Preconditions prüfen"},
-		{ID:"secondary-hardening", Description:"Secondary Host Hardening anwenden", Mutating:true},
-		{ID:"swap", Description:"gewählte Swap-Konfiguration anwenden", Mutating:true},
-		{ID:"podman", Description:"Rootless Podman, pasta, cgroup v2 und UserNS vorbereiten", Mutating:true},
-		{ID:"paths", Description:"passive Core-Plattformpfade erzeugen", Mutating:true},
-		{ID:"edge", Description:"root-eigene Socket-Proxies für 80 und 443 erzeugen", Mutating:true},
-		{ID:"caddy", Description:"Caddy erzeugen und starten", Mutating:true},
-		{ID:"authelia", Description:"Authelia erzeugen und starten", Mutating:true},
-		{ID:"inventory", Description:"exakte Core-Identität inventarisieren", Mutating:true},
-		{ID:"validate", Description:"Core vollständig read-only validieren"},
+		{ID: "preflight", Description: "Cloud-init und Core-Preconditions prüfen"},
+		{ID: "secondary-hardening", Description: "Secondary Host Hardening anwenden", Mutating: true},
+		{ID: "swap", Description: "gewählte Swap-Konfiguration anwenden", Mutating: true},
+		{ID: "podman", Description: "Rootless Podman, pasta, cgroup v2 und UserNS vorbereiten", Mutating: true},
+		{ID: "paths", Description: "passive Core-Plattformpfade erzeugen", Mutating: true},
+		{ID: "edge", Description: "root-eigene Socket-Proxies für 80 und 443 erzeugen", Mutating: true},
+		{ID: "caddy", Description: "Caddy erzeugen und starten", Mutating: true},
+		{ID: "authelia", Description: "Authelia erzeugen und starten", Mutating: true},
+		{ID: "inventory", Description: "exakte Core-Identität inventarisieren", Mutating: true},
+		{ID: "validate", Description: "Core vollständig read-only validieren"},
 	}
 }
 
-func coreActions(fsys fs.FS, op OperationKind) ([]executionbundle.File, []string, error) {
-	name := "actions/" + string(op) + ".sh"
-	data, err := fs.ReadFile(fsys, name)
-	if err != nil { return nil, nil, fmt.Errorf("Core package missing %s: %w", name, err) }
-	if len(data) == 0 { return nil, nil, fmt.Errorf("Core action %s is empty", name) }
-	return []executionbundle.File{{Path:name, Mode:0o500, Data:data}}, []string{"core-" + string(op)}, nil
-}
-
-func coreArtifacts(fsys fs.FS) ([]GeneratedArtifact, []executionbundle.File, error) {
-	var generated []GeneratedArtifact
-	var files []executionbundle.File
-	err := fs.WalkDir(fsys, "generated", func(name string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil { return walkErr }
-		if d.IsDir() { return nil }
-		if !d.Type().IsRegular() { return fmt.Errorf("unsupported Core generated entry %s", name) }
-		data, err := fs.ReadFile(fsys, name); if err != nil { return err }
-		rel := strings.TrimPrefix(name, "generated/")
-		target := "/" + rel
-		sum := sha256.Sum256(data)
-		generated = append(generated, GeneratedArtifact{Path:name, TargetPath:target, Mode:0o444, Data:data, SHA256:hex.EncodeToString(sum[:])})
-		files = append(files, executionbundle.File{Path:name, TargetPath:target, Mode:0o444, Data:data})
-		return nil
-	})
-	if err != nil && !errors.Is(err, fs.ErrNotExist) { return nil, nil, err }
-	sort.Slice(generated, func(i,j int) bool { return generated[i].Path < generated[j].Path })
-	sort.Slice(files, func(i,j int) bool { return files[i].Path < files[j].Path })
-	return generated, files, nil
+func coreActions(source fs.FS, operation OperationKind) ([]executionbundle.File, []string, error) {
+	name := "actions/" + string(operation) + ".sh"
+	data, err := fs.ReadFile(source, name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Core package missing %s: %w", name, err)
+	}
+	if len(data) == 0 {
+		return nil, nil, fmt.Errorf("Core action %s is empty", name)
+	}
+	return []executionbundle.File{{Path: name, Mode: 0o500, Data: data}}, []string{"core-" + string(operation)}, nil
 }
 
 func artifactPostState(values []GeneratedArtifact) map[string]string {
-	out := make(map[string]string, len(values)); for _, v := range values { out[v.TargetPath] = v.SHA256 }; return out
-}
-
-func safeStepID(value string) string {
-	value = path.Clean(value); value = strings.ReplaceAll(value, "/", "-"); value = strings.ReplaceAll(value, ".", "-"); return value
+	out := make(map[string]string, len(values))
+	for _, value := range values {
+		out[value.TargetPath] = value.SHA256
+	}
+	return out
 }
