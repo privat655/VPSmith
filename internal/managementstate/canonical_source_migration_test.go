@@ -58,7 +58,7 @@ func TestMigrationV3RetiresLegacySourceTablesWithoutLosingRows(t *testing.T) {
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != CurrentSchemaVersion {
-		t.Fatalf("schema version=%d want=%d", version, CurrentSchemaVersion)
+	if version != 3 {
+		t.Fatalf("schema version=%d want=3", version)
 	}
 }
