@@ -22,21 +22,64 @@ type PrimaryHardeningObservedState struct {
 	AutomaticRebootDisabled   bool              `json:"automatic_reboot_disabled"`
 }
 
+// SecondaryHardeningObservedState contains effective host facts owned by Core.
+// They are observed independently from generated files so a present file is
+// never accepted as proof that hardening is effective.
+type SecondaryHardeningObservedState struct {
+	AppArmorEnabled          bool `json:"apparmor_enabled"`
+	AuditdActive             bool `json:"auditd_active"`
+	ChronyActive             bool `json:"chrony_active"`
+	JournalPersistent        bool `json:"journal_persistent"`
+	JournalSystemMaxUseBytes int64 `json:"journal_system_max_use_bytes"`
+	JournalRuntimeMaxUseBytes int64 `json:"journal_runtime_max_use_bytes"`
+	CoredumpDisabled         bool `json:"coredump_disabled"`
+	ApportDisabled           bool `json:"apport_disabled"`
+	TmpTmpfs                 bool `json:"tmp_tmpfs"`
+	TmpNoExec                bool `json:"tmp_noexec"`
+	TmpNoSuid                bool `json:"tmp_nosuid"`
+	TmpNoDev                 bool `json:"tmp_nodev"`
+	BlockedModulesEffective  bool `json:"blocked_modules_effective"`
+	IPv6Disabled             bool `json:"ipv6_disabled"`
+	UnprivilegedPortStart    int  `json:"unprivileged_port_start"`
+	DockerAbsent             bool `json:"docker_absent"`
+	ContainerdAbsent         bool `json:"containerd_absent"`
+}
+
+type SwapDeviceObservedState struct {
+	Path        string `json:"path"`
+	Kind        string `json:"kind,omitempty"`
+	SizeBytes   int64  `json:"size_bytes"`
+	UsedBytes   int64  `json:"used_bytes"`
+	Priority    int    `json:"priority"`
+	CoreManaged bool   `json:"core_managed"`
+}
+
+type ListenerObservedState struct {
+	Address    string `json:"address"`
+	Port       int    `json:"port"`
+	Public     bool   `json:"public"`
+	Loopback   bool   `json:"loopback"`
+	Protocol   string `json:"protocol,omitempty"`
+}
+
 // HostObservedState contains direct host facts collected read-only over SSH.
 type HostObservedState struct {
-	Reachable        bool                          `json:"reachable"`
-	SSH              bool                          `json:"ssh"`
-	Hostname         string                        `json:"hostname,omitempty"`
-	OSID             string                        `json:"os_id,omitempty"`
-	OSVersion        string                        `json:"os_version,omitempty"`
-	Kernel           string                        `json:"kernel,omitempty"`
-	RootFilesystem   FilesystemObservedState       `json:"root_filesystem"`
-	Memory           MemoryObservedState           `json:"memory"`
-	Swap             MemoryObservedState           `json:"swap"`
-	RebootRequired   bool                          `json:"reboot_required"`
-	UFWActive        bool                          `json:"ufw_active"`
-	Fail2banActive   bool                          `json:"fail2ban_active"`
-	PrimaryHardening PrimaryHardeningObservedState `json:"primary_hardening"`
+	Reachable          bool                            `json:"reachable"`
+	SSH                bool                            `json:"ssh"`
+	Hostname           string                          `json:"hostname,omitempty"`
+	OSID               string                          `json:"os_id,omitempty"`
+	OSVersion          string                          `json:"os_version,omitempty"`
+	Kernel             string                          `json:"kernel,omitempty"`
+	RootFilesystem     FilesystemObservedState         `json:"root_filesystem"`
+	Memory             MemoryObservedState             `json:"memory"`
+	Swap               MemoryObservedState             `json:"swap"`
+	SwapDevices        []SwapDeviceObservedState       `json:"swap_devices,omitempty"`
+	Listeners          []ListenerObservedState         `json:"listeners,omitempty"`
+	RebootRequired     bool                            `json:"reboot_required"`
+	UFWActive          bool                            `json:"ufw_active"`
+	Fail2banActive     bool                            `json:"fail2ban_active"`
+	PrimaryHardening   PrimaryHardeningObservedState   `json:"primary_hardening"`
+	SecondaryHardening SecondaryHardeningObservedState `json:"secondary_hardening"`
 }
 
 type FilesystemObservedState struct {
@@ -120,6 +163,13 @@ func NormalizeObservedState(value *ObservedState) {
 		return
 	}
 	sort.Ints(value.Host.PrimaryHardening.UFWAllowedPublicTCPPorts)
+	sort.Slice(value.Host.SwapDevices, func(i, j int) bool { return value.Host.SwapDevices[i].Path < value.Host.SwapDevices[j].Path })
+	sort.Slice(value.Host.Listeners, func(i, j int) bool {
+		if value.Host.Listeners[i].Port == value.Host.Listeners[j].Port {
+			return value.Host.Listeners[i].Address < value.Host.Listeners[j].Address
+		}
+		return value.Host.Listeners[i].Port < value.Host.Listeners[j].Port
+	})
 	sort.Slice(value.Modules, func(i, j int) bool { return value.Modules[i].InstanceID < value.Modules[j].InstanceID })
 	sort.Slice(value.Core.Units, func(i, j int) bool { return value.Core.Units[i].Name < value.Core.Units[j].Name })
 	sort.Slice(value.Core.Containers, func(i, j int) bool { return value.Core.Containers[i].Name < value.Core.Containers[j].Name })
