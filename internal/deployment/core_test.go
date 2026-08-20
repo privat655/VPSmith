@@ -7,12 +7,22 @@ import (
 	"testing/fstest"
 )
 
+const caddyTestRef = "docker.io/library/caddy:2.10.2"
+const autheliaTestRef = "ghcr.io/authelia/authelia:4.39.20"
+
 func coreFS() fstest.MapFS {
-	files := fstest.MapFS{}
+	files := fstest.MapFS{
+		"core.json": &fstest.MapFile{Data: []byte(`{"core_version":"1.0.0","core_contract":"1.0","images":{"caddy":{"ref":"` + caddyTestRef + `"},"authelia":{"ref":"` + autheliaTestRef + `"}}}`)},
+	}
 	for _, operation := range []OperationKind{Install, Update, Reconfigure, Restore, Validate} {
 		files["actions/"+string(operation)+".sh"] = &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\nexit 0\n"), Mode: 0o755}
 	}
 	return files
+}
+
+func coreCompiler(t *testing.T) *Compiler {
+	t.Helper()
+	return newCompiler(t, caddyTestRef, autheliaTestRef)
 }
 
 func coreRequest(operation OperationKind) CoreRequest {
@@ -30,7 +40,7 @@ func coreRequest(operation OperationKind) CoreRequest {
 }
 
 func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *testing.T) {
-	compiler := newCompiler(t)
+	compiler := coreCompiler(t)
 	req := coreRequest(Update)
 	req.ObservedCoreID = "source-core-old"
 	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
@@ -54,6 +64,9 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 	if manifest.PackageSHA256 != req.Source.PackageSHA256 || len(manifest.Sources) != 1 || manifest.Sources[0].ID != req.Source.SourceID {
 		t.Fatalf("bundle lost Core source identity: %#v", manifest)
 	}
+	if len(manifest.Images) != 2 || len(prepared.ImageDigests) != 2 {
+		t.Fatalf("Core image identities were not frozen: %#v", manifest.Images)
+	}
 	want := map[string]string{
 		"core-source-id":      req.ObservedCoreID,
 		"core-package-sha256": req.ObservedCoreSHA256,
@@ -70,7 +83,7 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 }
 
 func TestPrepareCoreValidationCannotCarryMutation(t *testing.T) {
-	compiler := newCompiler(t)
+	compiler := coreCompiler(t)
 	req := coreRequest(Validate)
 	req.ObservedCoreID = req.Source.SourceID
 	req.ObservedCoreSHA256 = req.Source.PackageSHA256
@@ -93,12 +106,21 @@ func TestPrepareCoreValidationCannotCarryMutation(t *testing.T) {
 }
 
 func TestPrepareCoreUpdateRequiresVerifiedBackupFlagFromLifecycle(t *testing.T) {
-	compiler := newCompiler(t)
+	compiler := coreCompiler(t)
 	req := coreRequest(Update)
 	req.ObservedCoreID = "source-core-old"
 	req.ObservedCoreSHA256 = strings.Repeat("b", 64)
 
 	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
 		t.Fatal("Core update without verified backup precondition must fail closed")
+	}
+}
+
+func TestPrepareCoreRejectsDefinitionVersionMismatch(t *testing.T) {
+	compiler := coreCompiler(t)
+	req := coreRequest(Install)
+	req.Source.Version = "2.0.0"
+	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
+		t.Fatal("Core definition/source version mismatch must fail closed")
 	}
 }
