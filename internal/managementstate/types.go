@@ -94,10 +94,28 @@ type CloudInitDesiredState struct {
 	Administrator     string           `json:"administrator,omitempty"`
 }
 
+// CoreSecretReferences contains identifiers only. Secret material remains
+// encrypted in Management State and is streamed to the target only when a
+// Core execution bundle explicitly references it.
+type CoreSecretReferences struct {
+	AutheliaSession       SecretID `json:"authelia_session,omitempty"`
+	AutheliaStorage       SecretID `json:"authelia_storage,omitempty"`
+	AutheliaResetPassword SecretID `json:"authelia_reset_password,omitempty"`
+	AutheliaUsersDatabase SecretID `json:"authelia_users_database,omitempty"`
+}
+
+func (r CoreSecretReferences) IDs() []SecretID {
+	return []SecretID{r.AutheliaSession, r.AutheliaStorage, r.AutheliaResetPassword, r.AutheliaUsersDatabase}
+}
+
 type CoreDesiredState struct {
-	SourceID SourceSnapshotID `json:"source_id,omitempty"`
-	Version  string           `json:"version,omitempty"`
-	Swap     SwapDesiredState `json:"swap"`
+	SourceID     SourceSnapshotID     `json:"source_id,omitempty"`
+	Version      string               `json:"version,omitempty"`
+	CoreContract string               `json:"core_contract,omitempty"`
+	Domain       string               `json:"domain,omitempty"`
+	ACMEEmail    string               `json:"acme_email,omitempty"`
+	Swap         SwapDesiredState     `json:"swap"`
+	Secrets      CoreSecretReferences `json:"secrets"`
 }
 
 type SwapDesiredState struct {
@@ -276,6 +294,16 @@ func (s *Snapshot) normalize() {
 }
 
 func validateDesired(value DesiredState) error {
+	if value.Core.SourceID != "" {
+		if strings.TrimSpace(value.Core.Version) == "" || strings.TrimSpace(value.Core.CoreContract) == "" || strings.TrimSpace(value.Core.Domain) == "" {
+			return errors.New("Core desired state requires source, version, contract, and domain")
+		}
+		for _, id := range value.Core.Secrets.IDs() {
+			if id == "" {
+				return errors.New("Core desired state requires all Authelia secret references")
+			}
+		}
+	}
 	seen := map[ModuleInstanceID]struct{}{}
 	for _, module := range value.Modules {
 		if module.InstanceID == "" || module.PackageID == "" || strings.TrimSpace(module.Version) == "" {
