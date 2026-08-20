@@ -6,9 +6,48 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+
+	"github.com/privat655/VPSmith/internal/managementstate"
 )
 
 const coreRestoreRoot = "/var/lib/vpsmith/tmp/core-restore"
+
+type coreRestorePayloadTransport interface {
+	StageCoreRestorePayload(context.Context, session, string, io.Reader, string, int64) error
+	CleanupCoreRestorePayload(context.Context, session, string) error
+}
+
+func (a *StorageBackupTarget) StageCoreRestorePayload(ctx context.Context, targetID, bundleID string, input io.Reader, sha256 string, size int64) error {
+	if targetID == "" {
+		return errors.New("target id is required")
+	}
+	sess, err := a.gateway.strictSession(ctx, managementstate.TargetID(targetID))
+	if err != nil {
+		return err
+	}
+	defer zero(sess.IdentitySeed)
+	transport, ok := a.gateway.transport.(coreRestorePayloadTransport)
+	if !ok {
+		return errors.New("target transport does not support Core restore payload staging")
+	}
+	return transport.StageCoreRestorePayload(ctx, sess, bundleID, input, sha256, size)
+}
+
+func (a *StorageBackupTarget) CleanupCoreRestorePayload(ctx context.Context, targetID, bundleID string) error {
+	if targetID == "" {
+		return errors.New("target id is required")
+	}
+	sess, err := a.gateway.strictSession(ctx, managementstate.TargetID(targetID))
+	if err != nil {
+		return err
+	}
+	defer zero(sess.IdentitySeed)
+	transport, ok := a.gateway.transport.(coreRestorePayloadTransport)
+	if !ok {
+		return errors.New("target transport does not support Core restore payload cleanup")
+	}
+	return transport.CleanupCoreRestorePayload(ctx, sess, bundleID)
+}
 
 func (t *sshTransport) StageCoreRestorePayload(ctx context.Context, sess session, bundleID string, input io.Reader, sha256 string, size int64) error {
 	if !safeExecutionID(bundleID) || !validSHA256(sha256) || size <= 0 || input == nil {
@@ -43,6 +82,17 @@ sudo -n test "$(sudo -n stat -c %a -- "$dest")" = 400
 	_, stderr, err := t.runRemoteInputStream(ctx, sess, script, input)
 	if err != nil {
 		return fmt.Errorf("stage Core restore payload: %w%s", err, boundedRemoteError(stderr))
+	}
+	return nil
+}
+
+func (t *sshTransport) CleanupCoreRestorePayload(ctx context.Context, sess session, bundleID string) error {
+	if !safeExecutionID(bundleID) {
+		return errors.New("invalid Core restore bundle identity")
+	}
+	root := coreRestoreRoot + "/" + bundleID
+	if _, err := t.runRemote(ctx, sess, "sudo -n rm -rf -- "+shellQuote(root)); err != nil {
+		return fmt.Errorf("cleanup Core restore payload: %w", err)
 	}
 	return nil
 }
