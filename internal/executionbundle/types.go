@@ -80,6 +80,7 @@ type Manifest struct {
 	Validations         []ValidationSpec  `json:"validations"`
 	Steps               []Step            `json:"steps"`
 	BackupRequired      bool              `json:"backup_required"`
+	BackupRef           string            `json:"backup_ref,omitempty"`
 }
 
 type Artifact struct {
@@ -123,6 +124,7 @@ type Input struct {
 	Validations         []ValidationSpec
 	Steps               []Step
 	BackupRequired      bool
+	BackupRef           string
 }
 
 type Bundle struct {
