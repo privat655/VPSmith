@@ -98,7 +98,7 @@ func TestCoreBackupQuiescesCopiesResumesValidatesThenPersists(t *testing.T) {
 
 func TestCoreBackupResumeFailureDoesNotPersistArtifactAndCleansPlaintext(t *testing.T) {
 	ctx := context.Background()
-	lifecycle, backups, storage, targetID, passphrase := newCoreBackupTestLifecycle(t)
+	lifecycle, _, storage, targetID, passphrase := newCoreBackupTestLifecycle(t)
 	storage.resumeErr = errors.New("runtime validation failed")
 
 	if _, err := lifecycle.Backup(ctx, BackupRequest{TargetID: targetID, Passphrase: passphrase}); err == nil || !strings.Contains(err.Error(), "runtime validation failed") {
@@ -107,7 +107,7 @@ func TestCoreBackupResumeFailureDoesNotPersistArtifactAndCleansPlaintext(t *test
 	if want := []string{"quiesce", "prepare", "transfer", "resume", "cleanup"}; !reflect.DeepEqual(storage.calls, want) {
 		t.Fatalf("failed Core backup operation order=%#v want=%#v", storage.calls, want)
 	}
-	snapshot, err := backupsState(backups, ctx)
+	snapshot, err := lifecycle.state.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,11 +175,11 @@ func coreBackupTestArchive(t *testing.T, observed managementstate.ObservedState)
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"var/lib/vpsmith/core/desired.json":            data,
+		"var/lib/vpsmith/core/desired.json":           data,
 		"var/lib/vpsmith/core/authelia/data/state.db": []byte("authelia-state"),
-		"var/lib/vpsmith/secrets/core/session":         []byte("test-secret"),
-		"var/lib/vpsmith/inventory/core.json":          []byte("{}\n"),
-		"var/lib/vpsmith/execution/proof.json":         []byte("{}\n"),
+		"var/lib/vpsmith/secrets/core/session":        []byte("test-secret"),
+		"var/lib/vpsmith/inventory/core.json":         []byte("{}\n"),
+		"var/lib/vpsmith/execution/proof.json":        []byte("{}\n"),
 	}
 	for path, content := range files {
 		full := filepath.Join(root, filepath.FromSlash(path))
@@ -199,11 +199,4 @@ func coreBackupTestArchive(t *testing.T, observed managementstate.ObservedState)
 		t.Fatal(err)
 	}
 	return archive
-}
-
-func backupsState(manager *backuprestore.Manager, ctx context.Context) (managementstate.Snapshot, error) {
-	// The manager intentionally does not expose its store. Tests inspect the
-	// catalog through the state encoded in an empty known-id lookup instead.
-	_ = manager
-	return managementstate.Snapshot{}, nil
 }
