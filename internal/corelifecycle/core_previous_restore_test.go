@@ -2,6 +2,7 @@ package corelifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"net"
@@ -108,10 +109,20 @@ func TestPreparePreviousCoreRestoreRejectsTamperedPreviousState(t *testing.T) {
 }
 
 func coreLifecycleFS(version, contract string, operation deployment.OperationKind) fs.FS {
-	definition := []byte(`{"core_version":"` + version + `","core_contract":"` + contract + `","images":{"caddy":{"ref":"docker.io/library/caddy:2.11.4-alpine"},"authelia":{"ref":"docker.io/authelia/authelia:4.39.20"}}}`)
+	definition, err := json.Marshal(map[string]any{
+		"core_version":  version,
+		"core_contract": contract,
+		"images": map[string]any{
+			"caddy":    map[string]string{"ref": "docker.io/library/caddy:2.11.4-alpine"},
+			"authelia": map[string]string{"ref": "docker.io/authelia/authelia:4.39.20"},
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
 	return fstest.MapFS{
-		"core.json":                  &fstest.MapFile{Data: definition},
-		"actions/runtime.sh":         &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\n")},
+		"core.json":                            &fstest.MapFile{Data: definition},
+		"actions/runtime.sh":                   &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\n")},
 		"actions/" + string(operation) + ".sh": &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\nexit 0\n"), Mode: 0o755},
 	}
 }
