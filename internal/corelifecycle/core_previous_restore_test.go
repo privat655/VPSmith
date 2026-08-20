@@ -30,7 +30,7 @@ func (s *coreVersionedSources) FreezeCoreCandidate(_ context.Context, ref source
 	return frozen, nil
 }
 
-func TestPreparePreviousCoreRestoreUsesImmediateUpdateBackupAndExactOldIdentity(t *testing.T) {
+func TestPreparePreviousCoreRestoreResolvesImmediateUpdateBackupAndExactOldIdentity(t *testing.T) {
 	ctx := context.Background()
 	lifecycle, _, _, targetID, passphrase := newCoreBackupTestLifecycle(t)
 	installUpdateTestSecrets(t, lifecycle, targetID)
@@ -66,6 +66,9 @@ func TestPreparePreviousCoreRestoreUsesImmediateUpdateBackupAndExactOldIdentity(
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := recordTerminalUpdateAttempt(ctx, lifecycle, targetID, update, "success"); err != nil {
+		t.Fatal(err)
+	}
 
 	inspector := lifecycle.inspector.(coreBackupTestInspector)
 	inspector.observed.Core.SourceID = newSource.ID
@@ -74,7 +77,7 @@ func TestPreparePreviousCoreRestoreUsesImmediateUpdateBackupAndExactOldIdentity(
 	lifecycle.inspector = inspector
 
 	prepared, err := lifecycle.PreparePreviousCoreRestore(ctx, PreviousCoreRestoreRequest{
-		TargetID: targetID, Previous: update.Previous, BackupPassphrase: passphrase,
+		TargetID: targetID, BackupPassphrase: passphrase,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,18 +97,39 @@ func TestPreparePreviousCoreRestoreUsesImmediateUpdateBackupAndExactOldIdentity(
 	}
 }
 
-func TestPreparePreviousCoreRestoreRejectsTamperedPreviousState(t *testing.T) {
+func TestPreparePreviousCoreRestoreRejectsArbitraryUnboundBackup(t *testing.T) {
 	lifecycle, _, _, targetID, passphrase := newCoreBackupTestLifecycle(t)
-	previous := PreviousCoreState{
-		BackupID: "backup_not_from_update", SourceID: "core-source", Version: "1.0.0", PackageSHA256: strings.Repeat("a", 64), ExecutionBundleID: "bundle_core_v1",
-		Images: map[string]deployment.FrozenCoreImage{},
+	_, err := lifecycle.Backup(context.Background(), BackupRequest{TargetID: targetID, Passphrase: passphrase})
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, err := lifecycle.PreparePreviousCoreRestore(context.Background(), PreviousCoreRestoreRequest{
-		TargetID: targetID, Previous: previous, BackupPassphrase: passphrase,
+	_, err = lifecycle.PreparePreviousCoreRestore(context.Background(), PreviousCoreRestoreRequest{
+		TargetID: targetID, BackupPassphrase: passphrase,
 	})
-	if err == nil {
-		t.Fatal("tampered previous Core state was accepted")
+	if err == nil || !strings.Contains(err.Error(), "no terminal Core update") {
+		t.Fatalf("unbound Core backup restore error=%v", err)
 	}
+}
+
+func recordTerminalUpdateAttempt(ctx context.Context, lifecycle *Lifecycle, targetID managementstate.TargetID, update PreparedUpdate, outcome string) error {
+	bundle := update.Operation.Bundle
+	return lifecycle.state.Change(ctx, func(change *managementstate.Change) error {
+		if err := change.AppendExecutionBundle(managementstate.ExecutionBundleMetadata{
+			ID:        managementstate.ExecutionBundleID(bundle.ID),
+			TargetID:  targetID,
+			Kind:      string(bundle.Kind),
+			Version:   bundle.Manifest.Version,
+			SHA256:    bundle.SHA256,
+			BackupRef: update.Previous.BackupID,
+			CreatedAt: "2026-08-20T12:00:00Z",
+		}); err != nil {
+			return err
+		}
+		return change.AppendExecutionRecord(managementstate.ExecutionRecordMetadata{
+			ID: "execution_update_v2", BundleID: managementstate.ExecutionBundleID(bundle.ID), TargetID: targetID,
+			Outcome: outcome, StartedAt: "2026-08-20T12:00:01Z", FinishedAt: "2026-08-20T12:00:10Z",
+		})
+	})
 }
 
 func coreLifecycleFS(version, contract string, operation deployment.OperationKind) fs.FS {
