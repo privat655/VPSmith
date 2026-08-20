@@ -29,6 +29,15 @@ func coreRequest(operation OperationKind) CoreRequest {
 	return CoreRequest{
 		Operation: operation,
 		TargetID:  "target-1",
+		AdminUser: "vpsmith",
+		Domain:    "example.test",
+		ACMEEmail: "admin@example.test",
+		Secrets: CoreSecretIDs{
+			AutheliaSession:       "secret-session",
+			AutheliaStorage:       "secret-storage",
+			AutheliaResetPassword: "secret-reset",
+			AutheliaUsersDatabase: "secret-users",
+		},
 		Source: FrozenCoreSource{
 			SourceID:      "source-core-1",
 			Version:       "1.0.0",
@@ -54,6 +63,9 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	if prepared.CoreContract != "1.0" {
+		t.Fatalf("compiled Core contract=%q", prepared.CoreContract)
+	}
 	if len(prepared.FrozenSources) != 1 || prepared.FrozenSources[0].SourceID != req.Source.SourceID || prepared.FrozenSources[0].PackageSHA256 != req.Source.PackageSHA256 {
 		t.Fatalf("Core source was not frozen exactly: %#v", prepared.FrozenSources)
 	}
@@ -66,6 +78,9 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 	}
 	if len(manifest.Images) != 2 || len(prepared.ImageDigests) != 2 {
 		t.Fatalf("Core image identities were not frozen: %#v", manifest.Images)
+	}
+	if len(manifest.Secrets) != 4 {
+		t.Fatalf("Core Authelia secret references were not frozen: %#v", manifest.Secrets)
 	}
 	want := map[string]string{
 		"core-source-id":      req.ObservedCoreID,
@@ -122,5 +137,23 @@ func TestPrepareCoreRejectsDefinitionVersionMismatch(t *testing.T) {
 	req.Source.Version = "2.0.0"
 	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
 		t.Fatal("Core definition/source version mismatch must fail closed")
+	}
+}
+
+func TestPrepareCoreRejectsIncompleteConfiguration(t *testing.T) {
+	compiler := coreCompiler(t)
+	req := coreRequest(Install)
+	req.Secrets.AutheliaSession = ""
+	if _, err := compiler.PrepareCore(context.Background(), req); err == nil {
+		t.Fatal("Core without complete Authelia secret references must fail closed")
+	}
+}
+
+func TestCompileCoreDefinitionRejectsTrailingJSON(t *testing.T) {
+	source := fstest.MapFS{
+		"core.json": &fstest.MapFile{Data: []byte(`{"core_version":"1.0.0","core_contract":"1.0","images":{"caddy":{"ref":"caddy"},"authelia":{"ref":"authelia"}}} {}`)},
+	}
+	if _, err := compileCoreDefinition(source, "1.0.0"); err == nil {
+		t.Fatal("trailing Core definition JSON must fail closed")
 	}
 }
