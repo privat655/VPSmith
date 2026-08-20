@@ -279,6 +279,11 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 	if err != nil {
 		return Prepared{}, err
 	}
+	if kind == deployment.Update || kind == deployment.Restore {
+		if err := requireLifecycleModuleCompatibility(ctx, snapshot, target, observed, operation.CoreContract, l.sources, l.compiler); err != nil {
+			return Prepared{}, err
+		}
+	}
 	desiredCore.SourceID = source.ID
 	desiredCore.Version = source.Version
 	desiredCore.CoreContract = operation.CoreContract
