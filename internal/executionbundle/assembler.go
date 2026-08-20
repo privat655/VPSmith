@@ -51,7 +51,7 @@ func (a *Assembler) Assemble(in Input) (Bundle, error) {
 		SubjectIdentity: in.SubjectIdentity, PackageID: in.PackageID, PackageSHA256: in.PackageSHA256, Version: in.Version,
 		Sources: append([]SourceIdentity(nil), in.Sources...), Images: append([]ImageIdentity(nil), in.Images...), Artifacts: artifacts,
 		Actions: actions, ActionWritablePaths: append([]string(nil), in.ActionWritablePaths...), Secrets: append([]SecretReference(nil), in.Secrets...), Preconditions: append([]Precondition(nil), in.Preconditions...),
-		ExpectedPost: post, Validations: append([]ValidationSpec(nil), in.Validations...), Steps: append([]Step(nil), in.Steps...), BackupRequired: in.BackupRequired,
+		ExpectedPost: post, Validations: append([]ValidationSpec(nil), in.Validations...), Steps: append([]Step(nil), in.Steps...), BackupRequired: in.BackupRequired, BackupRef: in.BackupRef,
 	}
 	normalizeManifest(&m)
 	identityBytes, err := canonicalJSON(m)
