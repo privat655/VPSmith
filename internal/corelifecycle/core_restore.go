@@ -67,16 +67,48 @@ func (l *Lifecycle) ExecuteRestore(ctx context.Context, prepared Prepared, req R
 		return execution.Run{}, errors.Join(stageErr, closeErr, cleanupErr)
 	}
 
-	run, executeErr := l.Execute(ctx, prepared)
+	run, executeErr := l.executor.ExecuteVerifiedCoreRestore(ctx, string(prepared.TargetID), prepared.Operation.Bundle)
 	cleanupErr := storage.CleanupCoreRestorePayload(context.WithoutCancel(ctx), string(prepared.TargetID), prepared.Operation.Bundle.ID)
 	if executeErr != nil {
 		return run, errors.Join(executeErr, cleanupErr)
+	}
+	if err := l.completeRestoredCoreExecution(ctx, prepared); err != nil {
+		return run, errors.Join(err, cleanupErr)
 	}
 	secretErr := l.reconcileRestoredCoreSecrets(ctx, restore.CandidateRoot, prepared.DesiredCore.Secrets)
 	if secretErr != nil || cleanupErr != nil {
 		return run, errors.Join(secretErr, cleanupErr)
 	}
 	return run, nil
+}
+
+func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared Prepared) error {
+	observed, err := l.inspector.Inspect(ctx, prepared.TargetID)
+	if err != nil {
+		return fmt.Errorf("inspect Core after restore execution: %w", err)
+	}
+	if err := validatePostState(prepared, observed); err != nil {
+		return fmt.Errorf("Core restore post-validation failed: %w", err)
+	}
+	snapshot, err := l.state.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("read Management State after Core restore validation: %w", err)
+	}
+	target, err := targetFromSnapshot(snapshot, prepared.TargetID)
+	if err != nil {
+		return err
+	}
+	desired := target.Desired
+	desired.Core = prepared.DesiredCore
+	if err := l.state.Change(ctx, func(change *managementstate.Change) error {
+		if err := change.SetDesiredState(prepared.TargetID, desired); err != nil {
+			return err
+		}
+		return change.RecordObservedState(prepared.TargetID, observed)
+	}); err != nil {
+		return fmt.Errorf("commit Core restore lifecycle state: %w", err)
+	}
+	return nil
 }
 
 func validatePreparedRestoreArtifact(prepared Prepared, backupID managementstate.BackupArtifactID, restore *backuprestore.CataloguedRestore) error {
@@ -152,7 +184,6 @@ func (l *Lifecycle) reconcileRestoredCoreSecrets(ctx context.Context, candidateR
 			if err := change.RotateSecret(id, values[id]); err != nil {
 				return err
 			}
-		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("reconcile restored Core secrets in Management State: %w", err)
