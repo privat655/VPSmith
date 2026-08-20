@@ -298,6 +298,9 @@ func (l *Lifecycle) prepare(ctx context.Context, kind deployment.OperationKind, 
 		ObservedArtifacts:  observedArtifactHashes(observed.Core.ManagedArtifacts),
 		BackupRequired:     kind == deployment.Update,
 	}
+	if kind == deployment.Update {
+		coreReq.BackupRef = string(req.BackupID)
+	}
 	if observed.Core.Present {
 		if observed.Core.SourceID == "" || observed.Core.PackageSHA256 == "" {
 			return Prepared{}, errors.New("installed Core identity is incomplete")
