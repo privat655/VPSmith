@@ -100,8 +100,8 @@ func New(state *managementstate.Store, sources Sources, inspector Inspector, com
 func (l *Lifecycle) PrepareInstall(ctx context.Context, req PrepareRequest) (Prepared, error) {
 	return l.prepare(ctx, deployment.Install, req)
 }
-func (l *Lifecycle) PrepareUpdate(ctx context.Context, req PrepareRequest) (Prepared, error) {
-	return l.prepare(ctx, deployment.Update, req)
+func (l *Lifecycle) PrepareUpdate(context.Context, PrepareRequest) (Prepared, error) {
+	return Prepared{}, errors.New("Core update must use PrepareUpdateWithBackup so the immediate verified backup cannot be bypassed")
 }
 func (l *Lifecycle) PrepareSwapChange(ctx context.Context, req PrepareRequest) (Prepared, error) {
 	return l.prepare(ctx, deployment.Reconfigure, req)
@@ -205,7 +205,7 @@ func (l *Lifecycle) Backup(ctx context.Context, req BackupRequest) (backuprestor
 		return backuprestore.Artifact{}, errors.Join(resumeErr, cleanupErr)
 	}
 
-	producer := corePayloadProducer{copy: copy, observed: observed, desired: target.Desired.Core, bundleRef: latestSuccessfulBundle(snapshot, req.TargetID)}
+	producer := corePayloadProducer{copy: copy, observed: observed, desired: target.Desired.Core, bundleRef: latestSuccessfulCoreBundle(snapshot, observed, req.TargetID)}
 	artifact, err := l.backups.Create(ctx, backuprestore.CreateRequest{Type: managementstate.BackupCore, TargetID: req.TargetID, Passphrase: req.Passphrase, Producer: producer})
 	if err != nil {
 		cleanupErr := l.backups.CleanupTargetStorageCopy(recoveryCtx, l.storage, targetID, copy.Token)
@@ -600,11 +600,20 @@ func (p corePayloadProducer) Produce(ctx context.Context, root string) (backupre
 	return descriptor, nil
 }
 
-func latestSuccessfulBundle(snapshot managementstate.Snapshot, targetID managementstate.TargetID) string {
+func latestSuccessfulCoreBundle(snapshot managementstate.Snapshot, observed managementstate.ObservedState, targetID managementstate.TargetID) string {
+	proved := make(map[string]struct{}, len(observed.Core.ExecutionProofs))
+	for _, proof := range observed.Core.ExecutionProofs {
+		if proof.BundleID != "" && proof.Outcome == "success" {
+			proved[proof.BundleID] = struct{}{}
+		}
+	}
 	latestFinished := ""
 	latestBundle := ""
 	for _, record := range snapshot.ExecutionRecords {
 		if record.TargetID != targetID || record.Outcome != "success" || record.BundleID == "" {
+			continue
+		}
+		if _, ok := proved[string(record.BundleID)]; !ok {
 			continue
 		}
 		when := record.FinishedAt
