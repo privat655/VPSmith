@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/privat655/VPSmith/internal/backuprestore"
 	"github.com/privat655/VPSmith/internal/deployment"
 	"github.com/privat655/VPSmith/internal/managementstate"
 	"github.com/privat655/VPSmith/internal/sourcelibrary"
@@ -179,5 +178,3 @@ func (l *Lifecycle) previousCoreStateFromBackup(ctx context.Context, backupID ma
 		Images:            images,
 	}, nil
 }
-
-var _ = backuprestore.Manifest{}
