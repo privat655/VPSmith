@@ -108,6 +108,15 @@ func (r CoreSecretReferences) IDs() []SecretID {
 	return []SecretID{r.AutheliaSession, r.AutheliaStorage, r.AutheliaResetPassword, r.AutheliaUsersDatabase}
 }
 
+func (r CoreSecretReferences) any() bool {
+	for _, id := range r.IDs() {
+		if id != "" {
+			return true
+		}
+	}
+	return false
+}
+
 type CoreDesiredState struct {
 	SourceID     SourceSnapshotID     `json:"source_id,omitempty"`
 	Version      string               `json:"version,omitempty"`
@@ -294,13 +303,14 @@ func (s *Snapshot) normalize() {
 }
 
 func validateDesired(value DesiredState) error {
-	if value.Core.SourceID != "" {
-		if strings.TrimSpace(value.Core.Version) == "" || strings.TrimSpace(value.Core.CoreContract) == "" || strings.TrimSpace(value.Core.Domain) == "" {
-			return errors.New("Core desired state requires source, version, contract, and domain")
+	usesStep9CoreContract := value.Core.CoreContract != "" || value.Core.Domain != "" || value.Core.ACMEEmail != "" || value.Core.Secrets.any()
+	if usesStep9CoreContract {
+		if value.Core.SourceID == "" || strings.TrimSpace(value.Core.Version) == "" || strings.TrimSpace(value.Core.CoreContract) == "" || strings.TrimSpace(value.Core.Domain) == "" || strings.TrimSpace(value.Core.ACMEEmail) == "" {
+			return errors.New("Step-9 Core desired state requires source, version, contract, domain, and ACME email")
 		}
 		for _, id := range value.Core.Secrets.IDs() {
 			if id == "" {
-				return errors.New("Core desired state requires all Authelia secret references")
+				return errors.New("Step-9 Core desired state requires all Authelia secret references")
 			}
 		}
 	}
