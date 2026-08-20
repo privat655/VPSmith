@@ -10,9 +10,9 @@
       "sha256": "1fd33ff3bcbc8e86399ad49a6ba00ae11619cafd93763d5597c607d0c0f8e107"
     },
     "core": {
-      "version": "0.1.0-scaffold.1",
+      "version": "0.1.0",
       "path": "core",
-      "sha256": "1b827688232a6bc5e3052110c8fe67a54fb2a1029bd8a6e31178d8c81580783c"
+      "sha256": "b464657b251d5539ead93f3750c50ff902e72c39a2920901458f239e5b317e28"
     },
     "n8n": {
       "version": "0.1.0-scaffold.1",
