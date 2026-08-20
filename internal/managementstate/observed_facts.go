@@ -26,23 +26,26 @@ type PrimaryHardeningObservedState struct {
 // They are observed independently from generated files so a present file is
 // never accepted as proof that hardening is effective.
 type SecondaryHardeningObservedState struct {
-	AppArmorEnabled          bool `json:"apparmor_enabled"`
-	AuditdActive             bool `json:"auditd_active"`
-	ChronyActive             bool `json:"chrony_active"`
-	JournalPersistent        bool `json:"journal_persistent"`
-	JournalSystemMaxUseBytes int64 `json:"journal_system_max_use_bytes"`
+	AppArmorEnabled           bool  `json:"apparmor_enabled"`
+	AuditdActive              bool  `json:"auditd_active"`
+	ChronyActive              bool  `json:"chrony_active"`
+	JournalPersistent         bool  `json:"journal_persistent"`
+	JournalSystemMaxUseBytes  int64 `json:"journal_system_max_use_bytes"`
 	JournalRuntimeMaxUseBytes int64 `json:"journal_runtime_max_use_bytes"`
-	CoredumpDisabled         bool `json:"coredump_disabled"`
-	ApportDisabled           bool `json:"apport_disabled"`
-	TmpTmpfs                 bool `json:"tmp_tmpfs"`
-	TmpNoExec                bool `json:"tmp_noexec"`
-	TmpNoSuid                bool `json:"tmp_nosuid"`
-	TmpNoDev                 bool `json:"tmp_nodev"`
-	BlockedModulesEffective  bool `json:"blocked_modules_effective"`
-	IPv6Disabled             bool `json:"ipv6_disabled"`
-	UnprivilegedPortStart    int  `json:"unprivileged_port_start"`
-	DockerAbsent             bool `json:"docker_absent"`
-	ContainerdAbsent         bool `json:"containerd_absent"`
+	CoredumpDisabled          bool  `json:"coredump_disabled"`
+	ApportDisabled            bool  `json:"apport_disabled"`
+	TmpTmpfs                  bool  `json:"tmp_tmpfs"`
+	TmpNoExec                 bool  `json:"tmp_noexec"`
+	TmpNoSuid                 bool  `json:"tmp_nosuid"`
+	TmpNoDev                  bool  `json:"tmp_nodev"`
+	BlockedModulesEffective   bool  `json:"blocked_modules_effective"`
+	IPv6Disabled              bool  `json:"ipv6_disabled"`
+	UnprivilegedPortStart     int   `json:"unprivileged_port_start"`
+	DockerAbsent              bool  `json:"docker_absent"`
+	ContainerdAbsent          bool  `json:"containerd_absent"`
+	SubUIDRangePresent        bool  `json:"subuid_range_present"`
+	SubGIDRangePresent        bool  `json:"subgid_range_present"`
+	LingerEnabled             bool  `json:"linger_enabled"`
 }
 
 type SwapDeviceObservedState struct {
@@ -55,11 +58,11 @@ type SwapDeviceObservedState struct {
 }
 
 type ListenerObservedState struct {
-	Address    string `json:"address"`
-	Port       int    `json:"port"`
-	Public     bool   `json:"public"`
-	Loopback   bool   `json:"loopback"`
-	Protocol   string `json:"protocol,omitempty"`
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	Public   bool   `json:"public"`
+	Loopback bool   `json:"loopback"`
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // HostObservedState contains direct host facts collected read-only over SSH.
