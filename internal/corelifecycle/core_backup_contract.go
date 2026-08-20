@@ -17,9 +17,9 @@ func coreBackupStoragePaths() []string {
 }
 
 type coreBackupRuntimeIdentity struct {
-	SourceID      managementstate.SourceSnapshotID          `json:"source_id"`
-	Version       string                                    `json:"version"`
-	PackageSHA256 string                                    `json:"package_sha256"`
+	SourceID      managementstate.SourceSnapshotID         `json:"source_id"`
+	Version       string                                   `json:"version"`
+	PackageSHA256 string                                   `json:"package_sha256"`
 	Containers    []managementstate.ContainerObservedState `json:"containers,omitempty"`
 }
 
