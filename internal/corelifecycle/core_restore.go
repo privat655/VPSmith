@@ -72,17 +72,16 @@ func (l *Lifecycle) ExecuteRestore(ctx context.Context, prepared Prepared, req R
 	if executeErr != nil {
 		return run, errors.Join(executeErr, cleanupErr)
 	}
-	if err := l.completeRestoredCoreExecution(ctx, prepared); err != nil {
+	if err := l.completeRestoredCoreExecution(ctx, prepared, restore.CandidateRoot); err != nil {
 		return run, errors.Join(err, cleanupErr)
 	}
-	secretErr := l.reconcileRestoredCoreSecrets(ctx, restore.CandidateRoot, prepared.DesiredCore.Secrets)
-	if secretErr != nil || cleanupErr != nil {
-		return run, errors.Join(secretErr, cleanupErr)
+	if cleanupErr != nil {
+		return run, cleanupErr
 	}
 	return run, nil
 }
 
-func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared Prepared) error {
+func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared Prepared, candidateRoot string) error {
 	observed, err := l.inspector.Inspect(ctx, prepared.TargetID)
 	if err != nil {
 		return fmt.Errorf("inspect Core after restore execution: %w", err)
@@ -90,6 +89,12 @@ func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared 
 	if err := validatePostState(prepared, observed); err != nil {
 		return fmt.Errorf("Core restore post-validation failed: %w", err)
 	}
+	values, err := restoredCoreSecretValues(candidateRoot, prepared.DesiredCore.Secrets)
+	if err != nil {
+		return err
+	}
+	defer zeroCoreSecretValues(values)
+
 	snapshot, err := l.state.Snapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("read Management State after Core restore validation: %w", err)
@@ -100,13 +105,19 @@ func (l *Lifecycle) completeRestoredCoreExecution(ctx context.Context, prepared 
 	}
 	desired := target.Desired
 	desired.Core = prepared.DesiredCore
+	ids := prepared.DesiredCore.Secrets.IDs()
 	if err := l.state.Change(ctx, func(change *managementstate.Change) error {
+		for _, id := range ids {
+			if err := change.RotateSecret(id, values[id]); err != nil {
+				return err
+			}
+		}
 		if err := change.SetDesiredState(prepared.TargetID, desired); err != nil {
 			return err
 		}
 		return change.RecordObservedState(prepared.TargetID, observed)
 	}); err != nil {
-		return fmt.Errorf("commit Core restore lifecycle state: %w", err)
+		return fmt.Errorf("commit restored Core desired/observed/secrets atomically: %w", err)
 	}
 	return nil
 }
@@ -155,39 +166,33 @@ func validatePreparedRestoreArtifact(prepared Prepared, backupID managementstate
 	return nil
 }
 
-func (l *Lifecycle) reconcileRestoredCoreSecrets(ctx context.Context, candidateRoot string, refs managementstate.CoreSecretReferences) error {
+func restoredCoreSecretValues(candidateRoot string, refs managementstate.CoreSecretReferences) (map[managementstate.SecretID][]byte, error) {
 	ids := refs.IDs()
 	values := make(map[managementstate.SecretID][]byte, len(ids))
-	defer func() {
-		for _, value := range values {
-			for i := range value {
-				value[i] = 0
-			}
-		}
-	}()
 	for _, id := range ids {
 		name := string(id)
 		if name == "" || filepath.Base(name) != name || strings.ContainsAny(name, "/\\\x00\r\n") {
-			return errors.New("restored Core secret reference is not a safe file identity")
+			zeroCoreSecretValues(values)
+			return nil, errors.New("restored Core secret reference is not a safe file identity")
 		}
 		value, err := os.ReadFile(filepath.Join(candidateRoot, "var", "lib", "vpsmith", "secrets", "core", name))
 		if err != nil {
-			return fmt.Errorf("read restored Core secret %s: %w", id, err)
+			zeroCoreSecretValues(values)
+			return nil, fmt.Errorf("read restored Core secret %s: %w", id, err)
 		}
 		if len(value) == 0 {
-			return fmt.Errorf("restored Core secret %s is empty", id)
+			zeroCoreSecretValues(values)
+			return nil, fmt.Errorf("restored Core secret %s is empty", id)
 		}
 		values[id] = value
 	}
-	if err := l.state.Change(ctx, func(change *managementstate.Change) error {
-		for _, id := range ids {
-			if err := change.RotateSecret(id, values[id]); err != nil {
-				return err
-			}
+	return values, nil
+}
+
+func zeroCoreSecretValues(values map[managementstate.SecretID][]byte) {
+	for _, value := range values {
+		for i := range value {
+			value[i] = 0
 		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("reconcile restored Core secrets in Management State: %w", err)
 	}
-	return nil
 }
