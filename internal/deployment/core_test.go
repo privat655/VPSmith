@@ -12,7 +12,8 @@ const autheliaTestRef = "ghcr.io/authelia/authelia:4.39.20"
 
 func coreFS() fstest.MapFS {
 	files := fstest.MapFS{
-		"core.json": &fstest.MapFile{Data: []byte(`{"core_version":"1.0.0","core_contract":"1.0","images":{"caddy":{"ref":"` + caddyTestRef + `"},"authelia":{"ref":"` + autheliaTestRef + `"}}}`)},
+		"core.json":          &fstest.MapFile{Data: []byte(`{"core_version":"1.0.0","core_contract":"1.0","images":{"caddy":{"ref":"` + caddyTestRef + `"},"authelia":{"ref":"` + autheliaTestRef + `"}}}`)},
+		"actions/runtime.sh": &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\n")},
 	}
 	for _, operation := range []OperationKind{Install, Update, Reconfigure, Restore, Validate} {
 		files["actions/"+string(operation)+".sh"] = &fstest.MapFile{Data: []byte("#!/bin/sh\nset -eu\nexit 0\n"), Mode: 0o755}
