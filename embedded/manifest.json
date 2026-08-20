@@ -12,7 +12,7 @@
     "core": {
       "version": "0.1.0",
       "path": "core",
-      "sha256": "f07ae3f8555282917a0440637c11945832105f81e7625104e8eb7dd377dd5da2"
+      "sha256": "f3158190132393504968627fc72adc8aa7046e0d02a79c32d99c53205d1a06b9"
     },
     "n8n": {
       "version": "0.1.0-scaffold.1",
