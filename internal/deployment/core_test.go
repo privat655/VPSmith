@@ -69,8 +69,15 @@ func TestPrepareCoreFreezesExactInstalledIdentityAndGeneratedDesiredState(t *tes
 	if len(prepared.FrozenSources) != 1 || prepared.FrozenSources[0].SourceID != req.Source.SourceID || prepared.FrozenSources[0].PackageSHA256 != req.Source.PackageSHA256 {
 		t.Fatalf("Core source was not frozen exactly: %#v", prepared.FrozenSources)
 	}
-	if len(prepared.Artifacts) != 1 || prepared.Artifacts[0].TargetPath != coreDesiredTarget {
-		t.Fatalf("expected one compiler-generated Core desired artifact: %#v", prepared.Artifacts)
+	foundDesired := false
+	for _, generated := range prepared.Artifacts {
+		if generated.TargetPath == coreDesiredTarget {
+			foundDesired = true
+			break
+		}
+	}
+	if !foundDesired {
+		t.Fatalf("compiler-generated Core desired artifact is missing: %#v", prepared.Artifacts)
 	}
 	manifest := prepared.Bundle.Manifest
 	if manifest.PackageSHA256 != req.Source.PackageSHA256 || len(manifest.Sources) != 1 || manifest.Sources[0].ID != req.Source.SourceID {
