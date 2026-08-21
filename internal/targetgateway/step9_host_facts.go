@@ -175,11 +175,11 @@ func parseStep9HostFacts(raw []byte) (managementstate.SecondaryHardeningObserved
 	hardening.AuditdActive = values["auditd_active"] == "1"
 	hardening.ChronyActive = values["chrony_active"] == "1"
 	hardening.JournalPersistent = values["journal_persistent"] == "1"
-	hardening.JournalSystemMaxUseBytes, err = parseSystemdBytes(values["journal_system_max_use"])
+	hardening.JournalSystemMaxUseBytes, err = parseOptionalSystemdBytes(values["journal_system_max_use"])
 	if err != nil {
 		return hardening, nil, nil, fmt.Errorf("journald SystemMaxUse: %w", err)
 	}
-	hardening.JournalRuntimeMaxUseBytes, err = parseSystemdBytes(values["journal_runtime_max_use"])
+	hardening.JournalRuntimeMaxUseBytes, err = parseOptionalSystemdBytes(values["journal_runtime_max_use"])
 	if err != nil {
 		return hardening, nil, nil, fmt.Errorf("journald RuntimeMaxUse: %w", err)
 	}
@@ -210,6 +210,13 @@ func parseNonNegativeInt64(value, name string) (int64, error) {
 		return 0, fmt.Errorf("invalid %s", name)
 	}
 	return parsed, nil
+}
+
+func parseOptionalSystemdBytes(value string) (int64, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	return parseSystemdBytes(value)
 }
 
 func parseSystemdBytes(value string) (int64, error) {
