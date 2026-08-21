@@ -45,8 +45,8 @@ func TestCaptureCoreImageLocksRemovesGeneratedDesiredDocument(t *testing.T) {
 	input := coreBackupImageLocks{
 		SourceID: "source-core", Version: "1.0.0", PackageSHA256: packageSHA,
 		Images: map[string]coreBackupImage{
-			"caddy":    {Ref: "docker.io/library/caddy:2.11.4-alpine", Digest: "sha256:" + strings.Repeat("b", 64)},
-			"authelia": {Ref: "docker.io/authelia/authelia:4.39.20", Digest: "sha256:" + strings.Repeat("c", 64)},
+			"caddy":    {Ref: testCaddyRef, Digest: testCaddyDigest},
+			"authelia": {Ref: testAutheliaRef, Digest: testAutheliaDigest},
 		},
 	}
 	data, err := json.Marshal(input)
@@ -103,11 +103,8 @@ func TestCaptureCoreImageLocksFailsClosedOnIdentityMismatch(t *testing.T) {
 }
 
 func TestRequireCoreBackupReadyRejectsSourceCatalogVersionMismatch(t *testing.T) {
-	_, observed := validCorePostState()
-	target := managementstate.Target{Desired: managementstate.DesiredState{Core: managementstate.CoreDesiredState{
-		SourceID: "core-source", Version: "1.0.0", CoreContract: "1",
-		Swap: managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
-	}}}
+	prepared, observed := validCorePostState()
+	target := managementstate.Target{Desired: managementstate.DesiredState{Core: prepared.DesiredCore}}
 	snapshot := managementstate.Snapshot{Sources: managementstate.SourceState{Artifacts: []managementstate.SourceArtifact{{
 		ID: "core-source", Kind: managementstate.SourceCore, Version: "0.9.0", SHA256: strings.Repeat("a", 64),
 	}}}}
