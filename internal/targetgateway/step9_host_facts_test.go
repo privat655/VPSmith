@@ -17,6 +17,15 @@ func TestProductionInspectionReportsEffectiveCoreHostFacts(t *testing.T) {
 			return []byte("hostname\tvps-1\nkernel\tLinux 6.8\nos_id\tubuntu\nos_version\t24.04\nroot_total\t100000000000\nroot_available\t50000000000\nmem_total\t8589934592\nmem_available\t4294967296\nswap_total\t3221225472\nswap_free\t3221221376\nreboot\t0\nufw\t1\nfail2ban\t1\n"), nil, nil
 		case isStep9HostFactsCommand(command):
 			return []byte(step9HostFactsFixture), nil, nil
+		case strings.HasPrefix(command, "sudo -n du -s -B1 -- "):
+			return []byte("134217728\n"), nil, nil
+		case strings.Contains(command, coreInventoryPath):
+			sha := strings.Repeat("a", 64)
+			return []byte(`{"source_id":"core-source","version":"1","package_sha256":"` + sha + `","units":[{"name":"core.service","scope":"user"}],"containers":["caddy"],"networks":["core-net"],"caddy":{"unit":{"name":"core.service","scope":"user"},"container":"caddy","config_path":"/etc/vpsmith/Caddyfile"},"authelia":{"unit":{"name":"core.service","scope":"user"},"container":"caddy"},"auth_domain":"auth.example.test","public_routes":[],"managed_artifacts":["/etc/vpsmith/Caddyfile"],"execution_proofs":[{"id":"exec-1","outcome":"success","sha256":"` + sha + `"}]}`), nil, nil
+		case command == "podman inspect --format '{{.ImageName}}\\t{{.ImageDigest}}' 'caddy' 2>/dev/null || true":
+			return []byte("docker.io/library/caddy:2.11.4-alpine\tsha256:" + strings.Repeat("b", 64) + "\n"), nil, nil
+		case strings.Contains(command, "--resolve 'auth.example.test:443:127.0.0.1'"):
+			return []byte("200\n"), nil, nil
 		default:
 			return base(name, args)
 		}
@@ -43,6 +52,9 @@ func TestProductionInspectionReportsEffectiveCoreHostFacts(t *testing.T) {
 	}
 	if !hardening.DockerAbsent || !hardening.ContainerdAbsent || !hardening.SubUIDRangePresent || !hardening.SubGIDRangePresent || !hardening.LingerEnabled {
 		t.Fatalf("runtime foundation facts = %#v", hardening)
+	}
+	if observed.Host.CoreBackupSourceBytes != 134217728 || !observed.Core.HTTPS {
+		t.Fatalf("Step 9 runtime enrichment = host bytes %d, https %v", observed.Host.CoreBackupSourceBytes, observed.Core.HTTPS)
 	}
 
 	if len(observed.Host.SwapDevices) != 2 {
