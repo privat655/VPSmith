@@ -126,13 +126,8 @@ func newCoreBackupTestLifecycle(t *testing.T) (*Lifecycle, *backuprestore.Manage
 	t.Cleanup(func() { _ = store.Close() })
 	const packageSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	targetID := managementstate.TargetID("target-core-backup")
-	desired := managementstate.CoreDesiredState{
-		SourceID: "core-source", Version: "1.0.0", CoreContract: "1", Domain: "example.test", ACMEEmail: "ops@example.test",
-		Swap: managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
-		Secrets: managementstate.CoreSecretReferences{
-			AutheliaSession: "secret-session", AutheliaStorage: "secret-storage", AutheliaResetPassword: "secret-reset", AutheliaUsersDatabase: "secret-users",
-		},
-	}
+	preparedState, observed := validCorePostState()
+	desired := preparedState.DesiredCore
 	if err := store.Change(ctx, func(change *managementstate.Change) error {
 		if err := change.CreateTarget(managementstate.TargetRegistration{ID: targetID, Address: "203.0.113.10", SSHUser: "vpsmith"}); err != nil {
 			return err
@@ -145,7 +140,6 @@ func newCoreBackupTestLifecycle(t *testing.T) (*Lifecycle, *backuprestore.Manage
 		t.Fatal(err)
 	}
 
-	_, observed := validCorePostState()
 	observed.Core.SourceID = desired.SourceID
 	observed.Core.Version = desired.Version
 	observed.Core.PackageSHA256 = packageSHA
@@ -166,8 +160,8 @@ func coreBackupTestArchive(t *testing.T, observed managementstate.ObservedState)
 	lock := coreBackupImageLocks{
 		SourceID: observed.Core.SourceID, Version: observed.Core.Version, PackageSHA256: observed.Core.PackageSHA256,
 		Images: map[string]coreBackupImage{
-			"caddy":    {Ref: "docker.io/library/caddy:2.11.4-alpine", Digest: "sha256:" + strings.Repeat("b", 64)},
-			"authelia": {Ref: "docker.io/authelia/authelia:4.39.20", Digest: "sha256:" + strings.Repeat("c", 64)},
+			"caddy":    {Ref: testCaddyRef, Digest: testCaddyDigest},
+			"authelia": {Ref: testAutheliaRef, Digest: testAutheliaDigest},
 		},
 	}
 	data, err := json.Marshal(lock)
@@ -175,11 +169,11 @@ func coreBackupTestArchive(t *testing.T, observed managementstate.ObservedState)
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"var/lib/vpsmith/core/desired.json":           data,
+		"var/lib/vpsmith/core/desired.json":            data,
 		"var/lib/vpsmith/core/authelia/data/state.db": []byte("authelia-state"),
-		"var/lib/vpsmith/secrets/core/session":        []byte("test-secret"),
-		"var/lib/vpsmith/inventory/core.json":         []byte("{}\n"),
-		"var/lib/vpsmith/execution/proof.json":        []byte("{}\n"),
+		"var/lib/vpsmith/secrets/core/session":         []byte("test-secret"),
+		"var/lib/vpsmith/inventory/core.json":          []byte("{}\n"),
+		"var/lib/vpsmith/execution/proof.json":         []byte("{}\n"),
 	}
 	for path, content := range files {
 		full := filepath.Join(root, filepath.FromSlash(path))
