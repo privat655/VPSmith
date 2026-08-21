@@ -169,11 +169,11 @@ func coreBackupTestArchive(t *testing.T, observed managementstate.ObservedState)
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"var/lib/vpsmith/core/desired.json":            data,
+		"var/lib/vpsmith/core/desired.json":           data,
 		"var/lib/vpsmith/core/authelia/data/state.db": []byte("authelia-state"),
-		"var/lib/vpsmith/secrets/core/session":         []byte("test-secret"),
-		"var/lib/vpsmith/inventory/core.json":          []byte("{}\n"),
-		"var/lib/vpsmith/execution/proof.json":         []byte("{}\n"),
+		"var/lib/vpsmith/secrets/core/session":        []byte("test-secret"),
+		"var/lib/vpsmith/inventory/core.json":         []byte("{}\n"),
+		"var/lib/vpsmith/execution/proof.json":        []byte("{}\n"),
 	}
 	for path, content := range files {
 		full := filepath.Join(root, filepath.FromSlash(path))
