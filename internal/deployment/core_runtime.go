@@ -12,7 +12,7 @@ import (
 
 const coreGeneratedInventoryTarget = "/var/lib/vpsmith/core/generated/inventory.json"
 
-func generateCoreArtifacts(req CoreRequest, definition coreDefinition, images []executionbundle.ImageIdentity) ([]GeneratedArtifact, error) {
+func generateCoreArtifacts(req CoreRequest, definition coreDefinition, images []executionbundle.ImageIdentity, platform corePlatform) ([]GeneratedArtifact, error) {
 	desired, err := generateCoreDesired(req, definition, images)
 	if err != nil {
 		return nil, err
@@ -65,8 +65,8 @@ default_rootless_network_cmd="pasta"
 		textArtifact("generated/caddy-edge-http.service", "/etc/systemd/system/caddy-edge-http.service", 0o644, edgeService("HTTP", "caddy-edge-http.socket", 8080)),
 		textArtifact("generated/caddy-edge-https.socket", "/etc/systemd/system/caddy-edge-https.socket", 0o644, edgeSocket("HTTPS", 443)),
 		textArtifact("generated/caddy-edge-https.service", "/etc/systemd/system/caddy-edge-https.service", 0o644, edgeService("HTTPS", "caddy-edge-https.socket", 8443)),
-		textArtifact("generated/Caddyfile", "/var/lib/vpsmith/core/caddy/Caddyfile", 0o644, coreCaddyfile(req)),
-		textArtifact("generated/authelia-configuration.yml", "/var/lib/vpsmith/core/authelia/configuration.yml", 0o644, coreAutheliaConfiguration(req)),
+		textArtifact("generated/Caddyfile", "/var/lib/vpsmith/core/caddy/Caddyfile", 0o644, coreCaddyfile(req, platform)),
+		textArtifact("generated/authelia-configuration.yml", "/var/lib/vpsmith/core/authelia/configuration.yml", 0o644, coreAutheliaConfiguration(req, platform)),
 		textArtifact("generated/vpsmith-core.network", filepath.Join(quadletRoot, "vpsmith-core.network"), 0o640, `[Network]
 NetworkName=vpsmith_core
 Driver=bridge
@@ -83,9 +83,9 @@ Driver=bridge
 WantedBy=default.target
 `),
 		textArtifact("generated/authelia.container", filepath.Join(quadletRoot, "authelia.container"), 0o640, autheliaQuadlet(req, authelia)),
-		textArtifact("generated/caddy.container", filepath.Join(quadletRoot, "caddy.container"), 0o640, caddyQuadlet(req, caddy)),
+		textArtifact("generated/caddy.container", filepath.Join(quadletRoot, "caddy.container"), 0o640, caddyQuadlet(req, caddy, platform)),
 	}
-	inventory, err := coreInventoryArtifact(req, artifacts)
+	inventory, err := coreInventoryArtifact(req, artifacts, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ RestrictAddressFamilies=AF_INET AF_UNIX
 `, label, socket, socket, targetPort)
 }
 
-func coreCaddyfile(req CoreRequest) string {
+func coreCaddyfile(req CoreRequest, platform corePlatform) string {
 	authDomain := "auth." + req.Domain
 	return fmt.Sprintf(`{
 	email %s
@@ -233,15 +233,16 @@ http://%s {
 	reverse_proxy authelia:9091
 }
 
+%s
 :80, :443 {
 	import access_log
 	import security_headers
 	respond "not found" 404
 }
-`, req.ACMEEmail, authDomain, authDomain, authDomain)
+`, req.ACMEEmail, authDomain, authDomain, authDomain, renderCoreModuleSites(platform))
 }
 
-func coreAutheliaConfiguration(req CoreRequest) string {
+func coreAutheliaConfiguration(req CoreRequest, platform corePlatform) string {
 	return fmt.Sprintf(`theme: auto
 default_2fa_method: totp
 
@@ -267,9 +268,7 @@ access_control:
   rules:
     - domain: auth.%s
       policy: bypass
-    - domain: '*.%s'
-      policy: two_factor
-
+%s
 session:
   name: authelia_session
   same_site: lax
@@ -294,7 +293,7 @@ storage:
 notifier:
   filesystem:
     filename: /data/notification.txt
-`, req.Domain, req.Domain, req.Domain, req.Domain, req.Domain)
+`, req.Domain, req.Domain, renderCoreAutheliaRules(platform), req.Domain, req.Domain)
 }
 
 func imageWithDigest(image executionbundle.ImageIdentity) string {
@@ -340,7 +339,11 @@ WantedBy=default.target
 `, imageWithDigest(image), secretRoot, req.Secrets.AutheliaUsersDatabase, secretRoot, req.Secrets.AutheliaSession, secretRoot, req.Secrets.AutheliaStorage, secretRoot, req.Secrets.AutheliaResetPassword)
 }
 
-func caddyQuadlet(req CoreRequest, image executionbundle.ImageIdentity) string {
+func caddyQuadlet(req CoreRequest, image executionbundle.ImageIdentity, platform corePlatform) string {
+	var extraNetworks strings.Builder
+	for _, network := range platform.Networks {
+		fmt.Fprintf(&extraNetworks, "Network=%s\n", network)
+	}
 	return fmt.Sprintf(`[Unit]
 Description=VPSmith Caddy public edge
 After=vpsmith-core-network.service vpsmith-egress-network.service authelia.service
@@ -351,7 +354,7 @@ ContainerName=caddy
 Image=%s
 Network=vpsmith-egress.network
 Network=vpsmith-core.network
-NetworkAlias=caddy
+%sNetworkAlias=caddy
 User=1000:1000
 UserNS=nomap
 PublishPort=127.0.0.1:8080:80/tcp
@@ -371,13 +374,15 @@ TimeoutStartSec=900
 
 [Install]
 WantedBy=default.target
-`, imageWithDigest(image))
+`, imageWithDigest(image), extraNetworks.String())
 }
 
 type generatedCoreInventory struct {
 	SourceID         string               `json:"source_id"`
 	Version          string               `json:"version"`
 	PackageSHA256    string               `json:"package_sha256"`
+	AuthDomain       string               `json:"auth_domain"`
+	PublicRoutes     []CorePublicRoute    `json:"public_routes,omitempty"`
 	Units            []generatedCoreUnit  `json:"units"`
 	Containers       []string             `json:"containers"`
 	Networks         []string             `json:"networks"`
@@ -399,7 +404,7 @@ type generatedCoreService struct {
 	Container string            `json:"container"`
 }
 
-func coreInventoryArtifact(req CoreRequest, artifacts []GeneratedArtifact) (GeneratedArtifact, error) {
+func coreInventoryArtifact(req CoreRequest, artifacts []GeneratedArtifact, platform corePlatform) (GeneratedArtifact, error) {
 	managed := make([]string, 0, len(artifacts))
 	for _, item := range artifacts {
 		managed = append(managed, item.TargetPath)
@@ -408,10 +413,13 @@ func coreInventoryArtifact(req CoreRequest, artifacts []GeneratedArtifact) (Gene
 	sort.Strings(managed)
 	inventory := generatedCoreInventory{
 		SourceID: req.Source.SourceID, Version: req.Source.Version, PackageSHA256: req.Source.PackageSHA256,
-		Units:      []generatedCoreUnit{{Name: "caddy-edge-http.socket", Scope: "system"}, {Name: "caddy-edge-https.socket", Scope: "system"}, {Name: "authelia.service", Scope: "user"}, {Name: "caddy.service", Scope: "user"}},
-		Containers: []string{"authelia", "caddy"}, Networks: []string{"vpsmith_core", "vpsmith_egress"},
-		Caddy:    generatedCoreCaddy{Unit: generatedCoreUnit{Name: "caddy.service", Scope: "user"}, Container: "caddy", ConfigPath: "/var/lib/vpsmith/core/caddy/Caddyfile"},
-		Authelia: generatedCoreService{Unit: generatedCoreUnit{Name: "authelia.service", Scope: "user"}, Container: "authelia"}, ManagedArtifacts: managed,
+		AuthDomain:   "auth." + req.Domain,
+		PublicRoutes: publicRouteExpectations(platform),
+		Units:        []generatedCoreUnit{{Name: "caddy-edge-http.socket", Scope: "system"}, {Name: "caddy-edge-https.socket", Scope: "system"}, {Name: "authelia.service", Scope: "user"}, {Name: "caddy.service", Scope: "user"}},
+		Containers:   []string{"authelia", "caddy"}, Networks: []string{"vpsmith_core", "vpsmith_egress"},
+		Caddy:            generatedCoreCaddy{Unit: generatedCoreUnit{Name: "caddy.service", Scope: "user"}, Container: "caddy", ConfigPath: "/etc/caddy/Caddyfile"},
+		Authelia:         generatedCoreService{Unit: generatedCoreUnit{Name: "authelia.service", Scope: "user"}, Container: "authelia"},
+		ManagedArtifacts: managed,
 	}
 	data, err := json.MarshalIndent(inventory, "", "  ")
 	if err != nil {

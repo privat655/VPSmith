@@ -15,9 +15,6 @@ type coreCandidateInspector interface {
 	InspectCoreCandidate(context.Context, deployment.FrozenCoreSource) (deployment.CoreCandidateInspection, error)
 }
 
-// PreviousCoreState is the exact restore point created immediately before one
-// Core update. It is derived from the verified Core backup, not from mutable
-// target files or caller-provided metadata.
 type PreviousCoreState struct {
 	BackupID          managementstate.BackupArtifactID
 	SourceID          managementstate.SourceSnapshotID
@@ -27,18 +24,11 @@ type PreviousCoreState struct {
 	Images            map[string]deployment.FrozenCoreImage
 }
 
-// PreparedUpdate keeps the normal immutable Core operation and the exact
-// previous state that the visible recovery operation must use if this update
-// later needs to be reversed.
 type PreparedUpdate struct {
 	Prepared
 	Previous PreviousCoreState
 }
 
-// PrepareUpdateWithBackup is the canonical Core update preparation path. It
-// performs read-only preflight against one immutable candidate, creates and
-// verifies the mandatory immediate Core backup, then compiles the update from
-// that same pinned source snapshot. A caller cannot substitute an older backup.
 func (l *Lifecycle) PrepareUpdateWithBackup(ctx context.Context, req PrepareRequest) (PreparedUpdate, error) {
 	if req.TargetID == "" {
 		return PreparedUpdate{}, errors.New("target id is required")
@@ -83,6 +73,9 @@ func (l *Lifecycle) PrepareUpdateWithBackup(ctx context.Context, req PrepareRequ
 }
 
 func (l *Lifecycle) preflightUpdateCandidate(ctx context.Context, req PrepareRequest) (sourcelibrary.FrozenSnapshot, error) {
+	if req.Candidate.WorkspaceID != "" {
+		return sourcelibrary.FrozenSnapshot{}, errors.New("mutable Core workspace must be explicitly adopted before Core update planning")
+	}
 	observed, err := l.inspector.Inspect(ctx, req.TargetID)
 	if err != nil {
 		return sourcelibrary.FrozenSnapshot{}, err
@@ -92,6 +85,9 @@ func (l *Lifecycle) preflightUpdateCandidate(ctx context.Context, req PrepareReq
 	}
 	if err := requireSupportedHost(observed); err != nil {
 		return sourcelibrary.FrozenSnapshot{}, err
+	}
+	if err := requireCoreUpdateDiskSpace(observed); err != nil {
+		return sourcelibrary.FrozenSnapshot{}, fmt.Errorf("Core update disk preflight failed: %w", err)
 	}
 	snapshot, err := l.state.Snapshot(ctx)
 	if err != nil {
@@ -106,6 +102,9 @@ func (l *Lifecycle) preflightUpdateCandidate(ctx context.Context, req PrepareReq
 	}
 	if err := requireSteadyCoreBeforeMutation(snapshot, target, observed, deployment.Update); err != nil {
 		return sourcelibrary.FrozenSnapshot{}, err
+	}
+	if err := completeCoreDesiredRuntime(target.Desired.Core); err != nil {
+		return sourcelibrary.FrozenSnapshot{}, fmt.Errorf("Core update requires complete canonical desired state: %w", err)
 	}
 	if err := requireCoreSecretReferences(snapshot, target.Desired.Core.Secrets); err != nil {
 		return sourcelibrary.FrozenSnapshot{}, err

@@ -117,14 +117,30 @@ func (r CoreSecretReferences) any() bool {
 	return false
 }
 
+type CoreImageIdentity struct {
+	Ref    string `json:"ref"`
+	Digest string `json:"digest"`
+}
+
+// CoreAutheliaDesiredState keeps administrable, non-secret identity policy in
+// canonical Management State. Password hashes remain in the encrypted users
+// database secret; this catalog is used to validate module route subjects.
+type CoreAutheliaDesiredState struct {
+	Users      []string `json:"users,omitempty"`
+	Groups     []string `json:"groups,omitempty"`
+	Enrollment string   `json:"enrollment,omitempty"`
+}
+
 type CoreDesiredState struct {
-	SourceID     SourceSnapshotID     `json:"source_id,omitempty"`
-	Version      string               `json:"version,omitempty"`
-	CoreContract string               `json:"core_contract,omitempty"`
-	Domain       string               `json:"domain,omitempty"`
-	ACMEEmail    string               `json:"acme_email,omitempty"`
-	Swap         SwapDesiredState     `json:"swap"`
-	Secrets      CoreSecretReferences `json:"secrets"`
+	SourceID     SourceSnapshotID             `json:"source_id,omitempty"`
+	Version      string                       `json:"version,omitempty"`
+	CoreContract string                       `json:"core_contract,omitempty"`
+	Domain       string                       `json:"domain,omitempty"`
+	ACMEEmail    string                       `json:"acme_email,omitempty"`
+	Images       map[string]CoreImageIdentity `json:"images,omitempty"`
+	Authelia     CoreAutheliaDesiredState     `json:"authelia,omitempty"`
+	Swap         SwapDesiredState             `json:"swap"`
+	Secrets      CoreSecretReferences         `json:"secrets"`
 }
 
 type SwapDesiredState struct {
@@ -173,6 +189,8 @@ type CoreObservedState struct {
 	Version          string                         `json:"version,omitempty"`
 	PackageSHA256    string                         `json:"package_sha256,omitempty"`
 	Running          bool                           `json:"running"`
+	HTTPS            bool                           `json:"https"`
+	PublicRoutes     []PublicRouteObservedState     `json:"public_routes,omitempty"`
 	Podman           PodmanObservedState            `json:"podman"`
 	Units            []UnitObservedState            `json:"units,omitempty"`
 	Containers       []ContainerObservedState       `json:"containers,omitempty"`
@@ -289,6 +307,8 @@ func (s *Snapshot) normalize() {
 		s.Backups = []BackupArtifactMetadata{}
 	}
 	for i := range s.Targets {
+		sort.Strings(s.Targets[i].Desired.Core.Authelia.Users)
+		sort.Strings(s.Targets[i].Desired.Core.Authelia.Groups)
 		sort.Slice(s.Targets[i].Desired.Modules, func(a, b int) bool {
 			return s.Targets[i].Desired.Modules[a].InstanceID < s.Targets[i].Desired.Modules[b].InstanceID
 		})
@@ -314,6 +334,20 @@ func validateDesired(value DesiredState) error {
 				return errors.New("Step-9 Core desired state requires all Authelia secret references")
 			}
 		}
+		if len(value.Core.Images) != 0 {
+			if len(value.Core.Images) != 2 {
+				return errors.New("Step-9 Core desired image locks must contain exactly Caddy and Authelia")
+			}
+			for _, name := range []string{"caddy", "authelia"} {
+				image, ok := value.Core.Images[name]
+				if !ok || strings.TrimSpace(image.Ref) == "" || !validDesiredImageDigest(image.Digest) {
+					return fmt.Errorf("Step-9 Core desired image lock for %s is incomplete", name)
+				}
+			}
+		}
+		if value.Core.Authelia.Enrollment != "" && value.Core.Authelia.Enrollment != "self-service-totp" {
+			return errors.New("Step-9 Core Authelia enrollment must be self-service-totp")
+		}
 	}
 	seen := map[ModuleInstanceID]struct{}{}
 	for _, module := range value.Modules {
@@ -331,6 +365,19 @@ func validateDesired(value DesiredState) error {
 		}
 	}
 	return nil
+}
+
+func validDesiredImageDigest(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
+		return false
+	}
+	for _, r := range strings.TrimPrefix(value, "sha256:") {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validBackupType(value BackupArtifactType) bool {

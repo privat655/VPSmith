@@ -33,6 +33,17 @@ func requireLifecycleModuleCompatibility(ctx context.Context, snapshot managemen
 	return requireInstalledModulesCompatible(ctx, snapshot, target, observed, coreContract, moduleSources, checker)
 }
 
+func freezeLifecycleModuleSources(ctx context.Context, snapshot managementstate.Snapshot, target managementstate.Target, observed managementstate.ObservedState, sources Sources) ([]deployment.FrozenModuleSource, error) {
+	if len(target.Desired.Modules) == 0 {
+		return []deployment.FrozenModuleSource{}, nil
+	}
+	moduleSources, ok := sources.(moduleSnapshotSource)
+	if !ok {
+		return nil, errors.New("Source Library does not expose immutable module snapshots for Core platform generation")
+	}
+	return freezeInstalledModuleSources(ctx, snapshot, target, observed, moduleSources)
+}
+
 func requireInstalledModulesCompatible(ctx context.Context, snapshot managementstate.Snapshot, target managementstate.Target, observed managementstate.ObservedState, coreContract string, sources moduleSnapshotSource, checker moduleCompatibilityChecker) error {
 	if len(target.Desired.Modules) == 0 {
 		return nil
@@ -40,22 +51,39 @@ func requireInstalledModulesCompatible(ctx context.Context, snapshot managements
 	if sources == nil || checker == nil {
 		return errors.New("Core compatibility dependencies are required when modules are installed")
 	}
+	frozen, err := freezeInstalledModuleSources(ctx, snapshot, target, observed, sources)
+	if err != nil {
+		return err
+	}
+	if err := checker.CheckCoreCompatibility(coreContract, frozen); err != nil {
+		return fmt.Errorf("Core candidate is incompatible with installed modules: %w", err)
+	}
+	return nil
+}
+
+func freezeInstalledModuleSources(ctx context.Context, snapshot managementstate.Snapshot, target managementstate.Target, observed managementstate.ObservedState, sources moduleSnapshotSource) ([]deployment.FrozenModuleSource, error) {
+	if len(target.Desired.Modules) == 0 {
+		return []deployment.FrozenModuleSource{}, nil
+	}
+	if sources == nil {
+		return nil, errors.New("immutable module source access is required when modules are installed")
+	}
 	frozen := make([]deployment.FrozenModuleSource, 0, len(target.Desired.Modules))
 	for _, desired := range target.Desired.Modules {
 		actual, err := exactObservedModule(desired, observed.Modules)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		artifact, err := exactModuleArtifact(snapshot.Sources.Artifacts, desired, actual)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		source, err := sources.FreezeModuleSnapshot(ctx, artifact.ID)
 		if err != nil {
-			return fmt.Errorf("freeze installed module %s: %w", desired.InstanceID, err)
+			return nil, fmt.Errorf("freeze installed module %s: %w", desired.InstanceID, err)
 		}
 		if source.ID != artifact.ID || source.Kind != artifact.Kind || source.PackageID != artifact.PackageID || source.Version != artifact.Version || source.SHA256 != artifact.SHA256 || source.FS == nil {
-			return fmt.Errorf("installed module %s frozen source identity changed", desired.InstanceID)
+			return nil, fmt.Errorf("installed module %s frozen source identity changed", desired.InstanceID)
 		}
 		frozen = append(frozen, deployment.FrozenModuleSource{
 			InstanceID:    string(desired.InstanceID),
@@ -66,10 +94,7 @@ func requireInstalledModulesCompatible(ctx context.Context, snapshot managements
 			PackageFS:     source.FS,
 		})
 	}
-	if err := checker.CheckCoreCompatibility(coreContract, frozen); err != nil {
-		return fmt.Errorf("Core candidate is incompatible with installed modules: %w", err)
-	}
-	return nil
+	return frozen, nil
 }
 
 func exactObservedModule(desired managementstate.ModuleDesiredState, modules []managementstate.ModuleObservedState) (managementstate.ModuleObservedState, error) {

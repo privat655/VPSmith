@@ -67,22 +67,23 @@ type ListenerObservedState struct {
 
 // HostObservedState contains direct host facts collected read-only over SSH.
 type HostObservedState struct {
-	Reachable          bool                            `json:"reachable"`
-	SSH                bool                            `json:"ssh"`
-	Hostname           string                          `json:"hostname,omitempty"`
-	OSID               string                          `json:"os_id,omitempty"`
-	OSVersion          string                          `json:"os_version,omitempty"`
-	Kernel             string                          `json:"kernel,omitempty"`
-	RootFilesystem     FilesystemObservedState         `json:"root_filesystem"`
-	Memory             MemoryObservedState             `json:"memory"`
-	Swap               MemoryObservedState             `json:"swap"`
-	SwapDevices        []SwapDeviceObservedState       `json:"swap_devices,omitempty"`
-	Listeners          []ListenerObservedState         `json:"listeners,omitempty"`
-	RebootRequired     bool                            `json:"reboot_required"`
-	UFWActive          bool                            `json:"ufw_active"`
-	Fail2banActive     bool                            `json:"fail2ban_active"`
-	PrimaryHardening   PrimaryHardeningObservedState   `json:"primary_hardening"`
-	SecondaryHardening SecondaryHardeningObservedState `json:"secondary_hardening"`
+	Reachable             bool                            `json:"reachable"`
+	SSH                   bool                            `json:"ssh"`
+	Hostname              string                          `json:"hostname,omitempty"`
+	OSID                  string                          `json:"os_id,omitempty"`
+	OSVersion             string                          `json:"os_version,omitempty"`
+	Kernel                string                          `json:"kernel,omitempty"`
+	RootFilesystem        FilesystemObservedState         `json:"root_filesystem"`
+	CoreBackupSourceBytes int64                           `json:"core_backup_source_bytes,omitempty"`
+	Memory                MemoryObservedState             `json:"memory"`
+	Swap                  MemoryObservedState             `json:"swap"`
+	SwapDevices           []SwapDeviceObservedState       `json:"swap_devices,omitempty"`
+	Listeners             []ListenerObservedState         `json:"listeners,omitempty"`
+	RebootRequired        bool                            `json:"reboot_required"`
+	UFWActive             bool                            `json:"ufw_active"`
+	Fail2banActive        bool                            `json:"fail2ban_active"`
+	PrimaryHardening      PrimaryHardeningObservedState   `json:"primary_hardening"`
+	SecondaryHardening    SecondaryHardeningObservedState `json:"secondary_hardening"`
 }
 
 type FilesystemObservedState struct {
@@ -112,11 +113,22 @@ type UnitObservedState struct {
 }
 
 type ContainerObservedState struct {
-	Name     string   `json:"name"`
-	Present  bool     `json:"present"`
-	Running  bool     `json:"running"`
-	Health   string   `json:"health,omitempty"`
-	Networks []string `json:"networks,omitempty"`
+	Name        string   `json:"name"`
+	Present     bool     `json:"present"`
+	Running     bool     `json:"running"`
+	Health      string   `json:"health,omitempty"`
+	ImageRef    string   `json:"image_ref,omitempty"`
+	ImageDigest string   `json:"image_digest,omitempty"`
+	Networks    []string `json:"networks,omitempty"`
+}
+
+type PublicRouteObservedState struct {
+	Hostname     string `json:"hostname"`
+	PathPrefix   string `json:"path"`
+	AuthMode     string `json:"auth_mode"`
+	StatusCode   int    `json:"status_code"`
+	HTTPS        bool   `json:"https"`
+	AuthEnforced bool   `json:"auth_enforced,omitempty"`
 }
 
 type NetworkObservedState struct {
@@ -177,6 +189,12 @@ func NormalizeObservedState(value *ObservedState) {
 	sort.Slice(value.Core.Units, func(i, j int) bool { return value.Core.Units[i].Name < value.Core.Units[j].Name })
 	sort.Slice(value.Core.Containers, func(i, j int) bool { return value.Core.Containers[i].Name < value.Core.Containers[j].Name })
 	sort.Slice(value.Core.Networks, func(i, j int) bool { return value.Core.Networks[i].Name < value.Core.Networks[j].Name })
+	sort.Slice(value.Core.PublicRoutes, func(i, j int) bool {
+		if value.Core.PublicRoutes[i].Hostname == value.Core.PublicRoutes[j].Hostname {
+			return value.Core.PublicRoutes[i].PathPrefix < value.Core.PublicRoutes[j].PathPrefix
+		}
+		return value.Core.PublicRoutes[i].Hostname < value.Core.PublicRoutes[j].Hostname
+	})
 	sort.Slice(value.Core.ManagedArtifacts, func(i, j int) bool { return value.Core.ManagedArtifacts[i].Path < value.Core.ManagedArtifacts[j].Path })
 	sort.Slice(value.Core.ExecutionProofs, func(i, j int) bool { return value.Core.ExecutionProofs[i].ID < value.Core.ExecutionProofs[j].ID })
 	for i := range value.Core.Containers {

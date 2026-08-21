@@ -41,15 +41,20 @@ func (s CoreSecretIDs) complete() bool {
 }
 
 // CoreRequest contains only frozen facts. Detection belongs to CoreLifecycle
-// and TargetInspector; generation belongs here.
+// and TargetInspector; generation belongs here. InstalledModules are exact
+// Source Library snapshots of the modules already installed on this target;
+// only their declarative platform contributions are consumed here.
 type CoreRequest struct {
 	Operation          OperationKind
 	TargetID           string
 	AdminUser          string
 	Domain             string
 	ACMEEmail          string
+	Authelia           CoreAutheliaConfiguration
 	Secrets            CoreSecretIDs
 	Source             FrozenCoreSource
+	InstalledModules   []FrozenModuleSource
+	LockedImages       map[string]FrozenCoreImage
 	ObservedCoreID     string
 	ObservedCoreSHA256 string
 	ObservedArtifacts  map[string]string
@@ -65,6 +70,8 @@ type CoreRequest struct {
 type PreparedCoreOperation struct {
 	PreparedOperation
 	CoreContract string
+	PublicRoutes []CorePublicRoute
+	Authelia     CoreAutheliaConfiguration
 }
 
 type generatedCoreImage struct {
@@ -87,6 +94,7 @@ type generatedCoreDesired struct {
 	AdminUser          string                        `json:"admin_user"`
 	Domain             string                        `json:"domain"`
 	ACMEEmail          string                        `json:"acme_email"`
+	Authelia           CoreAutheliaConfiguration     `json:"authelia"`
 	Images             map[string]generatedCoreImage `json:"images"`
 	Secrets            generatedCoreSecrets          `json:"secrets"`
 	SwapMode           string                        `json:"swap_mode"`
@@ -94,9 +102,10 @@ type generatedCoreDesired struct {
 	EffectiveSwapBytes int64                         `json:"effective_swap_bytes"`
 }
 
-// PrepareCore freezes one Core candidate into the same immutable execution
-// bundle used by all structural VPSmith operations. The target runner stays
-// generic; it never contains a second Core installer.
+// PrepareCore freezes one Core candidate and the platform contributions of all
+// installed modules into the same immutable execution bundle used by all
+// structural VPSmith operations. The target runner stays generic; it never
+// contains a second Core installer or module-specific behavior.
 func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCoreOperation, error) {
 	if err := ctx.Err(); err != nil {
 		return PreparedCoreOperation{}, err
@@ -110,6 +119,11 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 	if strings.TrimSpace(req.TargetID) == "" || strings.TrimSpace(req.Source.SourceID) == "" || strings.TrimSpace(req.Source.Version) == "" || !validSHA256(req.Source.PackageSHA256) || req.Source.PackageFS == nil {
 		return PreparedCoreOperation{}, errors.New("complete frozen Core source identity is required")
 	}
+	normalizedAuth, err := normalizeCoreAuthelia(req.Authelia)
+	if err != nil {
+		return PreparedCoreOperation{}, err
+	}
+	req.Authelia = normalizedAuth
 	if err := validateCoreConfiguration(req); err != nil {
 		return PreparedCoreOperation{}, err
 	}
@@ -134,7 +148,11 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 	if err != nil {
 		return PreparedCoreOperation{}, err
 	}
-	imageIDs, imageDigests, err := c.resolveCoreImages(ctx, definition)
+	platform, err := c.compileCorePlatform(definition.CoreContract, req.InstalledModules, req.Authelia)
+	if err != nil {
+		return PreparedCoreOperation{}, fmt.Errorf("compile Core platform contributions: %w", err)
+	}
+	imageIDs, imageDigests, err := c.resolveCoreImagesForRequest(ctx, req, definition)
 	if err != nil {
 		return PreparedCoreOperation{}, err
 	}
@@ -145,7 +163,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 	artifacts := []GeneratedArtifact{}
 	files := []executionbundle.File{}
 	if req.Operation != Validate {
-		artifacts, err = generateCoreArtifacts(req, definition, imageIDs)
+		artifacts, err = generateCoreArtifacts(req, definition, imageIDs, platform)
 		if err != nil {
 			return PreparedCoreOperation{}, err
 		}
@@ -186,6 +204,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 		"core_package_sha256": req.Source.PackageSHA256,
 		"core_contract":       definition.CoreContract,
 		"image_digests":       imageDigests,
+		"public_routes":       publicRouteExpectations(platform),
 		"artifacts":           artifactPostState(artifacts),
 	}
 	bundleKind := executionbundle.Migration
@@ -246,7 +265,12 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 		Validations:   validations,
 		Bundle:        bundle,
 	}
-	return PreparedCoreOperation{PreparedOperation: operation, CoreContract: definition.CoreContract}, nil
+	return PreparedCoreOperation{
+		PreparedOperation: operation,
+		CoreContract:      definition.CoreContract,
+		PublicRoutes:      publicRouteExpectations(platform),
+		Authelia:          req.Authelia,
+	}, nil
 }
 
 func validateCoreConfiguration(req CoreRequest) error {
@@ -262,6 +286,9 @@ func validateCoreConfiguration(req CoreRequest) error {
 	}
 	if !req.Secrets.complete() {
 		return errors.New("Core requires all Authelia secret references")
+	}
+	if req.Authelia.Enrollment != CoreAutheliaEnrollmentSelfServiceTOTP {
+		return errors.New("Core requires self-service TOTP enrollment")
 	}
 	return nil
 }
@@ -304,6 +331,7 @@ func generateCoreDesired(req CoreRequest, definition coreDefinition, images []ex
 		AdminUser:     req.AdminUser,
 		Domain:        req.Domain,
 		ACMEEmail:     req.ACMEEmail,
+		Authelia:      req.Authelia,
 		Images:        resolved,
 		Secrets: generatedCoreSecrets{
 			AutheliaSession:       req.Secrets.AutheliaSession,
