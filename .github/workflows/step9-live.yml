@@ -47,7 +47,7 @@ jobs:
             --volume "$PWD:/src" \
             --workdir /src \
             golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 \
-            sh -eu -c 'go build -o live/vpsmith-step7-live ./cmd/vpsmith-step7-live && go build -o live/vpsmith-step9-live ./cmd/vpsmith-step9-live'
+            sh -eu -c 'go build -buildvcs=false -o live/vpsmith-step7-live ./cmd/vpsmith-step7-live && go build -buildvcs=false -o live/vpsmith-step9-live ./cmd/vpsmith-step9-live'
 
       - name: Generate real VPSmith Cloud-init and target identity
         run: |
