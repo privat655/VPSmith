@@ -1,0 +1,373 @@
+name: step 9 live Core lifecycle
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/step9-core-lifecycle
+    paths:
+      - '.github/workflows/step9-live.yml'
+      - 'cmd/vpsmith-step9-live/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: step9-live-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-core-lifecycle:
+    name: fresh Ubuntu VM / real SSH / full Core lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UBUNTU_IMAGE_URL: https://cloud-images.ubuntu.com/releases/noble/release-20260725/ubuntu-24.04-server-cloudimg-amd64.img
+      UBUNTU_IMAGE_SHA256: d1940f7d69d343355e183dff1e08a59852d32e7309baa7a4bad8365b11b005ac
+      STEP9_DOMAIN: ci.example.com
+      STEP9_AUTH_DOMAIN: auth.ci.example.com
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install VM and Cloud-init tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            cloud-image-utils cloud-init openssh-client openssl qemu-system-x86 qemu-utils socat
+
+      - name: Build live verification drivers
+        run: |
+          set -eu
+          mkdir -p live/out live/state live/sources live/backups live/bundles live/ssh-runtime live/tls
+          chmod 0700 live/state live/sources live/backups live/bundles live/ssh-runtime live/tls
+          docker run --rm \
+            --volume "$PWD:/src" \
+            --workdir /src \
+            golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 \
+            sh -eu -c 'go build -o live/vpsmith-step7-live ./cmd/vpsmith-step7-live && go build -o live/vpsmith-step9-live ./cmd/vpsmith-step9-live'
+
+      - name: Generate real VPSmith Cloud-init and target identity
+        run: |
+          set -o pipefail
+          live/vpsmith-step7-live prepare \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --output "$PWD/live/out/user-data" \
+            --target-id-output "$PWD/live/target-id" \
+            --hostname vpsmith-step9 \
+            --timezone Etc/UTC \
+            --administrator vpsmith \
+            | tee live/out/prepare.json
+          test "$(wc -c < live/out/user-data)" -lt 16384
+          cloud-init schema --config-file live/out/user-data
+
+      - name: Create ephemeral CI TLS material
+        run: |
+          set -eu
+          umask 077
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout live/tls/ca.key \
+            -out live/tls/ca.crt \
+            -days 2 \
+            -subj '/CN=VPSmith Step 9 Live Test CA' >/dev/null 2>&1
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout live/tls/auth.key \
+            -out live/tls/auth.csr \
+            -subj "/CN=${STEP9_AUTH_DOMAIN}" \
+            -addext "subjectAltName=DNS:${STEP9_AUTH_DOMAIN}" >/dev/null 2>&1
+          printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n' "$STEP9_AUTH_DOMAIN" >live/tls/auth.ext
+          openssl x509 -req \
+            -in live/tls/auth.csr \
+            -CA live/tls/ca.crt \
+            -CAkey live/tls/ca.key \
+            -CAcreateserial \
+            -out live/tls/auth.crt \
+            -days 2 \
+            -sha256 \
+            -extfile live/tls/auth.ext >/dev/null 2>&1
+          cat live/tls/auth.crt live/tls/ca.crt >live/tls/auth-chain.crt
+
+      - name: Create CI-only vendor script
+        run: |
+          set -eu
+          cert_dir="/var/lib/vpsmith/core/caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${STEP9_AUTH_DOMAIN}"
+          {
+            echo '#!/bin/sh'
+            echo 'set -eu'
+            echo "printf '%s\\n' '127.0.0.1 ${STEP9_AUTH_DOMAIN}' >> /etc/hosts"
+            echo 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 update >/dev/null'
+            echo 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install --no-install-recommends -y qemu-guest-agent >/dev/null'
+            echo 'systemctl enable --now qemu-guest-agent.service >/dev/null'
+            echo "install -d -m 0700 '${cert_dir}'"
+            echo "cat >'${cert_dir}/${STEP9_AUTH_DOMAIN}.crt' <<'CERT'"
+            cat live/tls/auth-chain.crt
+            echo 'CERT'
+            echo "cat >'${cert_dir}/${STEP9_AUTH_DOMAIN}.key' <<'KEY'"
+            cat live/tls/auth.key
+            echo 'KEY'
+            echo "printf '%s\\n' '{}' >'${cert_dir}/${STEP9_AUTH_DOMAIN}.json'"
+            echo "chmod 0600 '${cert_dir}/${STEP9_AUTH_DOMAIN}.key'"
+            echo "chmod 0644 '${cert_dir}/${STEP9_AUTH_DOMAIN}.crt' '${cert_dir}/${STEP9_AUTH_DOMAIN}.json'"
+            echo "cat > /usr/local/share/ca-certificates/vpsmith-step9-live.crt <<'CA'"
+            cat live/tls/ca.crt
+            echo 'CA'
+            echo 'chmod 0644 /usr/local/share/ca-certificates/vpsmith-step9-live.crt'
+            echo 'update-ca-certificates >/dev/null'
+          } >live/out/vendor-data
+          chmod 0600 live/out/vendor-data
+
+      - name: Make CI DNS agree with target address
+        run: |
+          printf '%s\n' "127.0.0.1 ${STEP9_AUTH_DOMAIN}" | sudo tee -a /etc/hosts >/dev/null
+          getent ahostsv4 "$STEP9_AUTH_DOMAIN" | grep -q '^127\.0\.0\.1[[:space:]]'
+
+      - name: Download pinned Ubuntu 24.04 cloud image
+        run: |
+          curl --fail --location --retry 3 --output live/base.img "$UBUNTU_IMAGE_URL"
+          printf '%s  %s\n' "$UBUNTU_IMAGE_SHA256" live/base.img | sha256sum --check --strict
+          qemu-img create -f qcow2 -F qcow2 -b "$PWD/live/base.img" live/vm.qcow2
+          qemu-img resize live/vm.qcow2 16G
+
+      - name: Create NoCloud seed
+        run: |
+          cat >live/out/meta-data <<'EOF'
+          instance-id: vpsmith-step9-live
+          local-hostname: vpsmith-step9
+          EOF
+          cloud-localds -V live/out/vendor-data live/seed.img live/out/user-data live/out/meta-data
+
+      - name: Boot fresh Ubuntu VM
+        run: |
+          accel=tcg
+          if [ -c /dev/kvm ]; then
+            sudo chmod 0666 /dev/kvm || true
+            if qemu-system-x86_64 -accel help | grep -qx kvm; then
+              accel=kvm
+            fi
+          fi
+          printf '%s\n' "$accel" | tee live/out/qemu-acceleration.txt
+          qemu-system-x86_64 \
+            -name vpsmith-step9-live \
+            -machine "q35,accel=$accel" \
+            -smp 2 \
+            -m 4096 \
+            -drive "if=virtio,format=qcow2,file=$PWD/live/vm.qcow2" \
+            -drive "if=virtio,format=raw,readonly=on,file=$PWD/live/seed.img" \
+            -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            -device virtio-serial-pci \
+            -chardev "socket,path=$PWD/live/qga.sock,server=on,wait=off,id=qga0" \
+            -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
+            -display none \
+            -monitor none \
+            -serial "file:$PWD/live/out/serial.log" \
+            -daemonize \
+            -pidfile "$PWD/live/qemu.pid"
+
+      - name: Wait for real SSH host key
+        run: |
+          for attempt in $(seq 1 240); do
+            if ssh-keyscan -T 5 -p 2222 -t ed25519 127.0.0.1 >live/out/ssh-keyscan.txt 2>live/out/ssh-keyscan.stderr \
+              && test -s live/out/ssh-keyscan.txt; then
+              exit 0
+            fi
+            pid=$(cat live/qemu.pid 2>/dev/null || true)
+            if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+              echo 'QEMU exited before SSH became reachable' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          echo 'SSH host key did not become reachable' >&2
+          exit 1
+
+      - name: Observe and explicitly confirm host key
+        run: |
+          set -o pipefail
+          target_id=$(cat live/target-id)
+          live/vpsmith-step7-live observe \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --address 127.0.0.1:2222 \
+            --output "$PWD/live/out/host-key-observation.json" \
+            --timeout 15m \
+            >live/out/observe.json
+          live/vpsmith-step7-live confirm \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --observation "$PWD/live/out/host-key-observation.json"
+
+      - name: Enroll fresh Step-7 target
+        run: |
+          set -o pipefail
+          target_id=$(cat live/target-id)
+          live/vpsmith-step7-live enroll \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --timeout 20m \
+            >live/out/enrollment.json
+
+      - name: Verify CI guest infrastructure is ready
+        run: |
+          python3 - <<'PY'
+          import json, socket, time
+          path = 'live/qga.sock'
+          deadline = time.time() + 120
+          while time.time() < deadline:
+              try:
+                  with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                      sock.settimeout(5)
+                      sock.connect(path)
+                      sock.sendall(b'\xff' + json.dumps({'execute': 'guest-ping'}).encode() + b'\n')
+                      data = sock.recv(4096)
+                      if b'"return"' in data:
+                          raise SystemExit(0)
+              except OSError:
+                  pass
+              time.sleep(2)
+          raise SystemExit('qemu guest agent did not become ready')
+          PY
+
+      - name: Run full Step-9 Core lifecycle through production composition
+        run: |
+          set -o pipefail
+          target_id=$(cat live/target-id)
+          live/vpsmith-step9-live run \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --backups-dir "$PWD/live/backups" \
+            --bundles-dir "$PWD/live/bundles" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --domain "$STEP9_DOMAIN" \
+            --acme-email ci@example.invalid \
+            --next-embedded-root "$PWD/live/next-embedded" \
+            --output "$PWD/live/out/step9-lifecycle.json" \
+            --timeout 75m \
+            | tee live/out/step9-lifecycle.stdout
+
+      - name: Tamper Cloud-init-owned SSH policy out of band
+        run: |
+          python3 - <<'PY'
+          import base64, json, socket, time
+
+          def request(payload):
+              with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                  sock.settimeout(10)
+                  sock.connect('live/qga.sock')
+                  sock.sendall(b'\xff' + json.dumps(payload).encode() + b'\n')
+                  data = b''
+                  while b'\n' not in data:
+                      chunk = sock.recv(65536)
+                      if not chunk:
+                          break
+                      data += chunk
+              lines = [line for line in data.splitlines() if line.startswith(b'{')]
+              if not lines:
+                  raise RuntimeError('no qemu guest agent response')
+              response = json.loads(lines[-1])
+              if 'error' in response:
+                  raise RuntimeError(response['error'])
+              return response.get('return', {})
+
+          command = "printf 'MaxSessions 4\\n' > /etc/ssh/sshd_config.d/00-vpsmith-step9-live-drift.conf && sshd -t && systemctl reload ssh.service"
+          started = request({'execute': 'guest-exec', 'arguments': {'path': '/bin/sh', 'arg': ['-eu', '-c', command], 'capture-output': True}})
+          pid = started['pid']
+          for _ in range(60):
+              status = request({'execute': 'guest-exec-status', 'arguments': {'pid': pid}})
+              if status.get('exited'):
+                  if status.get('exitcode') != 0:
+                      stderr = base64.b64decode(status.get('err-data', '')).decode(errors='replace')
+                      raise RuntimeError('guest tamper failed: ' + stderr)
+                  raise SystemExit(0)
+              time.sleep(1)
+          raise SystemExit('guest tamper did not finish')
+          PY
+
+      - name: Prove Core blocks Primary Hardening drift without repair
+        run: |
+          set -o pipefail
+          target_id=$(cat live/target-id)
+          live/vpsmith-step9-live assert-primary-block \
+            --state-dir "$PWD/live/state" \
+            --sources-dir "$PWD/live/sources" \
+            --backups-dir "$PWD/live/backups" \
+            --bundles-dir "$PWD/live/bundles" \
+            --embedded-root "$PWD/embedded" \
+            --runtime-dir "$PWD/live/ssh-runtime" \
+            --target-id "$target_id" \
+            --output "$PWD/live/out/step9-primary-drift.json" \
+            | tee live/out/step9-primary-drift.stdout
+
+      - name: Write verification summary
+        if: success()
+        run: |
+          {
+            echo '## VPSmith Step 9 live verification'
+            echo
+            echo '- Fresh Ubuntu 24.04 VM booted from the pinned cloud image.'
+            echo '- Step 7 Cloud-init, TOFU confirmation, and enrollment used the production application composition and strict SSH path.'
+            echo '- Core install, reconnect diagnosis, Swap change, explicit Core Backup, controlled Core Update, Previous Core Restore, and postvalidation succeeded.'
+            echo '- Exact Core package and Caddy/Authelia image identities were observed from the running target.'
+            echo '- A newer local VPSmith Studio embedded Core source did not mutate the target or create target execution history.'
+            echo '- Out-of-band drift of a Cloud-init-owned SSH setting blocked Core mutation and was not repaired by Core.'
+            echo '- HTTPS stayed certificate-validated; the CI harness supplied only ephemeral local trust/certificate material and did not weaken curl validation.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect read-only diagnostics
+        if: always()
+        run: |
+          if [ -f live/target-id ] && [ -x live/vpsmith-step7-live ]; then
+            target_id=$(cat live/target-id)
+            live/vpsmith-step7-live diagnose \
+              --state-dir "$PWD/live/state" \
+              --sources-dir "$PWD/live/sources" \
+              --embedded-root "$PWD/embedded" \
+              --runtime-dir "$PWD/live/ssh-runtime" \
+              --target-id "$target_id" \
+              >live/out/diagnostics.json \
+              2>live/out/diagnostics.stderr || true
+          fi
+          tail -n 300 live/out/serial.log >live/out/serial-tail.log 2>/dev/null || true
+
+      - name: Stop VM
+        if: always()
+        run: |
+          if [ -f live/qemu.pid ]; then
+            pid=$(cat live/qemu.pid 2>/dev/null || true)
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" || true
+              for attempt in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || exit 0; sleep 1; done
+              kill -9 "$pid" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Remove ephemeral CI secrets before artifact upload
+        if: always()
+        run: |
+          rm -rf live/tls live/out/vendor-data live/seed.img
+
+      - name: Upload public live-test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: step9-live-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            live/out/
