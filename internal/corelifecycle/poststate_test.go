@@ -9,6 +9,13 @@ import (
 	"github.com/privat655/VPSmith/internal/managementstate"
 )
 
+const (
+	testCaddyRef       = "docker.io/library/caddy:2.11.4-alpine"
+	testCaddyDigest    = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	testAutheliaRef    = "docker.io/authelia/authelia:4.39.20"
+	testAutheliaDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+)
+
 func TestCorePostValidationRequiresEffectiveHostRuntimeContract(t *testing.T) {
 	prepared, observed := validCorePostState()
 	if err := validatePostState(prepared, observed); err != nil {
@@ -30,6 +37,8 @@ func TestCorePostValidationRequiresEffectiveHostRuntimeContract(t *testing.T) {
 		{"missing public https", func(v *managementstate.ObservedState) { v.Host.Listeners = v.Host.Listeners[:3] }, "listener"},
 		{"swapfile missing", func(v *managementstate.ObservedState) { v.Host.SwapDevices = nil }, "swap"},
 		{"swapfile wrong size", func(v *managementstate.ObservedState) { v.Host.SwapDevices[0].SizeBytes = 1 << 30 }, "swap"},
+		{"invalid https", func(v *managementstate.ObservedState) { v.Core.HTTPS = false }, "HTTPS"},
+		{"wrong caddy digest", func(v *managementstate.ObservedState) { v.Core.Containers[0].ImageDigest = "sha256:" + strings.Repeat("d", 64) }, "caddy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -82,12 +91,21 @@ func validCorePostState() (Prepared, managementstate.ObservedState) {
 		BlockedModulesEffective: true, IPv6Disabled: true, UnprivilegedPortStart: 1024,
 		DockerAbsent: true, ContainerdAbsent: true, SubUIDRangePresent: true, SubGIDRangePresent: true, LingerEnabled: true,
 	}
+	desired := managementstate.CoreDesiredState{
+		SourceID: "core-source", Version: "1.0.0", CoreContract: "1", Domain: "example.test", ACMEEmail: "ops@example.test",
+		Swap: managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
+		Authelia: managementstate.CoreAutheliaDesiredState{Users: []string{"operator"}, Groups: []string{"admins"}, Enrollment: "self-service-totp"},
+		Images: map[string]managementstate.CoreImageIdentity{
+			"caddy":    {Ref: testCaddyRef, Digest: testCaddyDigest},
+			"authelia": {Ref: testAutheliaRef, Digest: testAutheliaDigest},
+		},
+		Secrets: managementstate.CoreSecretReferences{
+			AutheliaSession: "secret-session", AutheliaStorage: "secret-storage", AutheliaResetPassword: "secret-reset", AutheliaUsersDatabase: "secret-users",
+		},
+	}
 	prepared := Prepared{
 		PrimaryBefore: primary,
-		DesiredCore: managementstate.CoreDesiredState{
-			SourceID: "core-source", Version: "1.0.0", CoreContract: "1",
-			Swap: managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
-		},
+		DesiredCore:   desired,
 		Operation: deployment.PreparedCoreOperation{PreparedOperation: deployment.PreparedOperation{
 			Bundle: executionbundle.Bundle{Manifest: executionbundle.Manifest{PackageSHA256: packageSHA}},
 		}},
@@ -95,8 +113,10 @@ func validCorePostState() (Prepared, managementstate.ObservedState) {
 	observed := managementstate.ObservedState{
 		Host: managementstate.HostObservedState{
 			Reachable: true, SSH: true, PrimaryHardening: primary, SecondaryHardening: secondary,
-			Memory:      managementstate.MemoryObservedState{TotalBytes: 8 << 30, AvailableBytes: 4 << 30},
-			SwapDevices: []managementstate.SwapDeviceObservedState{{Path: "/var/lib/vpsmith/swapfile", Kind: "file", SizeBytes: 2 << 30, CoreManaged: true}},
+			RootFilesystem:       managementstate.FilesystemObservedState{TotalBytes: 20 << 30, AvailableBytes: 8 << 30},
+			CoreBackupSourceBytes: 128 << 20,
+			Memory:               managementstate.MemoryObservedState{TotalBytes: 8 << 30, AvailableBytes: 4 << 30},
+			SwapDevices:          []managementstate.SwapDeviceObservedState{{Path: "/var/lib/vpsmith/swapfile", Kind: "file", SizeBytes: 2 << 30, CoreManaged: true}},
 			Listeners: []managementstate.ListenerObservedState{
 				{Address: "0.0.0.0", Port: 80, Public: true, Protocol: "tcp"},
 				{Address: "0.0.0.0", Port: 443, Public: true, Protocol: "tcp"},
@@ -106,10 +126,14 @@ func validCorePostState() (Prepared, managementstate.ObservedState) {
 		},
 		CloudInit: managementstate.CloudInitObservedState{Present: true, Status: "ok"},
 		Core: managementstate.CoreObservedState{
-			Present: true, SourceID: "core-source", Version: "1.0.0", PackageSHA256: packageSHA, Running: true,
+			Present: true, SourceID: "core-source", Version: "1.0.0", PackageSHA256: packageSHA, Running: true, HTTPS: true,
 			Podman:   managementstate.PodmanObservedState{Present: true, Rootless: true, CgroupVersion: "v2", RootlessNetworkCmd: "pasta"},
 			Caddy:    managementstate.ServiceObservedState{Present: true, Running: true, ConfigChecked: true, ConfigValid: true},
 			Authelia: managementstate.ServiceObservedState{Present: true, Running: true},
+			Containers: []managementstate.ContainerObservedState{
+				{Name: "caddy", Present: true, Running: true, ImageRef: testCaddyRef, ImageDigest: testCaddyDigest},
+				{Name: "authelia", Present: true, Running: true, ImageRef: testAutheliaRef, ImageDigest: testAutheliaDigest},
+			},
 		},
 	}
 	return prepared, observed
