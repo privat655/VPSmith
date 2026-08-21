@@ -38,7 +38,9 @@ func TestCorePostValidationRequiresEffectiveHostRuntimeContract(t *testing.T) {
 		{"swapfile missing", func(v *managementstate.ObservedState) { v.Host.SwapDevices = nil }, "swap"},
 		{"swapfile wrong size", func(v *managementstate.ObservedState) { v.Host.SwapDevices[0].SizeBytes = 1 << 30 }, "swap"},
 		{"invalid https", func(v *managementstate.ObservedState) { v.Core.HTTPS = false }, "HTTPS"},
-		{"wrong caddy digest", func(v *managementstate.ObservedState) { v.Core.Containers[0].ImageDigest = "sha256:" + strings.Repeat("d", 64) }, "caddy"},
+		{"wrong caddy digest", func(v *managementstate.ObservedState) {
+			v.Core.Containers[0].ImageDigest = "sha256:" + strings.Repeat("d", 64)
+		}, "caddy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,7 +95,7 @@ func validCorePostState() (Prepared, managementstate.ObservedState) {
 	}
 	desired := managementstate.CoreDesiredState{
 		SourceID: "core-source", Version: "1.0.0", CoreContract: "1", Domain: "example.test", ACMEEmail: "ops@example.test",
-		Swap: managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
+		Swap:     managementstate.SwapDesiredState{Mode: "swapfile", SizeGiB: 2},
 		Authelia: managementstate.CoreAutheliaDesiredState{Users: []string{"operator"}, Groups: []string{"admins"}, Enrollment: "self-service-totp"},
 		Images: map[string]managementstate.CoreImageIdentity{
 			"caddy":    {Ref: testCaddyRef, Digest: testCaddyDigest},
@@ -113,10 +115,10 @@ func validCorePostState() (Prepared, managementstate.ObservedState) {
 	observed := managementstate.ObservedState{
 		Host: managementstate.HostObservedState{
 			Reachable: true, SSH: true, PrimaryHardening: primary, SecondaryHardening: secondary,
-			RootFilesystem:       managementstate.FilesystemObservedState{TotalBytes: 20 << 30, AvailableBytes: 8 << 30},
+			RootFilesystem:        managementstate.FilesystemObservedState{TotalBytes: 20 << 30, AvailableBytes: 8 << 30},
 			CoreBackupSourceBytes: 128 << 20,
-			Memory:               managementstate.MemoryObservedState{TotalBytes: 8 << 30, AvailableBytes: 4 << 30},
-			SwapDevices:          []managementstate.SwapDeviceObservedState{{Path: "/var/lib/vpsmith/swapfile", Kind: "file", SizeBytes: 2 << 30, CoreManaged: true}},
+			Memory:                managementstate.MemoryObservedState{TotalBytes: 8 << 30, AvailableBytes: 4 << 30},
+			SwapDevices:           []managementstate.SwapDeviceObservedState{{Path: "/var/lib/vpsmith/swapfile", Kind: "file", SizeBytes: 2 << 30, CoreManaged: true}},
 			Listeners: []managementstate.ListenerObservedState{
 				{Address: "0.0.0.0", Port: 80, Public: true, Protocol: "tcp"},
 				{Address: "0.0.0.0", Port: 443, Public: true, Protocol: "tcp"},
