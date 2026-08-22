@@ -34,7 +34,7 @@
                 raise exc
         proof["phase"] = "post-validation"
         write_proof(proof_file, proof)
-        proof["post_state"] = post_state(manifest)
+        proof["post_state"] = post_state(manifest, args.admin_user)
         if root == BOOTSTRAP_ROOT and manifest.get("subject_kind") == "core":
             proof["phase"] = "promoting-history"
             write_proof(proof_file, proof)
