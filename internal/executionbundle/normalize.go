@@ -66,6 +66,9 @@ func validateInput(in Input) error {
 		}
 	}
 	if in.Kind == Validation {
+		if len(in.Directories) > 0 {
+			return errors.New("validation bundle contains target directory mutation")
+		}
 		for _, s := range in.Steps {
 			if s.Mutating {
 				return fmt.Errorf("validation bundle contains mutating step %s", s.ID)
