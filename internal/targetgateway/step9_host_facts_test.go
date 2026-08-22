@@ -119,6 +119,28 @@ func TestProductionInspectionAcceptsUnsetSecondaryHardeningBeforeCoreInstall(t *
 	}
 }
 
+func TestStep9HostFactsObservesApportThroughSystemdInsteadOfUbuntuConfig(t *testing.T) {
+	if strings.Contains(step9HostFactsProbe, "/etc/default/apport") {
+		t.Fatal("Step 9 inspection must not make Ubuntu-owned /etc/default/apport part of the Core contract")
+	}
+	for _, unit := range []string{
+		"apport.service",
+		"apport-autoreport.path",
+		"apport-autoreport.service",
+		"apport-autoreport.timer",
+		"apport-coredump-hook@.service",
+		"apport-forward.socket",
+		"apport-forward@.service",
+	} {
+		if !strings.Contains(step9HostFactsProbe, unit) {
+			t.Fatalf("Step 9 inspection does not observe Apport unit %s", unit)
+		}
+	}
+	if !strings.Contains(step9HostFactsProbe, "systemctl is-enabled") || !strings.Contains(step9HostFactsProbe, "masked") {
+		t.Fatal("Step 9 inspection must require effective Apport systemd masks")
+	}
+}
+
 func isStep9HostFactsCommand(command string) bool {
 	return len(command) > 0 && containsAll(command, "vpsmith_step9_host_facts", "swapon --show", "ss -H -ltn", "aa-enabled")
 }
