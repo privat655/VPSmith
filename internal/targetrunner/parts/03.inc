@@ -5,11 +5,56 @@ def action_by_id(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(a.get("id")): a for a in manifest.get("actions", [])}
 
 
+def principal_id(name: str, admin_user: str, want_group: bool) -> int:
+    if name == "root":
+        return 0
+    if name == "admin":
+        entry = pwd.getpwnam(admin_user)
+        return entry.pw_gid if want_group else entry.pw_uid
+    raise RuntimeError(f"unsupported directory principal: {name}")
+
+
+def verify_directory(spec: dict[str, Any], admin_user: str) -> None:
+    path = Path(str(spec["path"]))
+    try:
+        st = path.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"declared target directory is missing: {path}") from exc
+    if not stat.S_ISDIR(st.st_mode) or path.is_symlink():
+        raise RuntimeError(f"declared target directory is unsafe: {path}")
+    expected_uid = principal_id(str(spec["owner"]), admin_user, False)
+    expected_gid = principal_id(str(spec["group"]), admin_user, True)
+    expected_mode = int(spec["mode"])
+    if st.st_uid != expected_uid or st.st_gid != expected_gid or stat.S_IMODE(st.st_mode) != expected_mode:
+        raise RuntimeError(f"declared target directory ownership or mode drift: {path}")
+
+
+def prepare_directories(manifest: dict[str, Any], admin_user: str) -> None:
+    for spec in manifest.get("directories", []):
+        path = Path(str(spec["path"]))
+        if path.exists() or path.is_symlink():
+            verify_directory(spec, admin_user)
+            continue
+        parent = path.parent
+        if not parent.is_dir() or parent.is_symlink():
+            raise RuntimeError(f"declared target directory parent is missing or unsafe: {parent}")
+        uid = principal_id(str(spec["owner"]), admin_user, False)
+        gid = principal_id(str(spec["group"]), admin_user, True)
+        mode = int(spec["mode"])
+        os.mkdir(path, mode)
+        os.chown(path, uid, gid)
+        os.chmod(path, mode)
+        fsync_dir(parent)
+        verify_directory(spec, admin_user)
+
+
 def apply_artifact(spec: dict[str, Any], data: bytes, preconditions: dict[str, str]) -> None:
     target = Path(str(spec["target_path"]))
     desired = str(spec["sha256"])
     if sha256_bytes(data) != desired:
         raise RuntimeError("artifact payload hash mismatch")
+    if not target.parent.is_dir() or target.parent.is_symlink():
+        raise RuntimeError(f"artifact parent directory is missing or unsafe: {target.parent}")
     if target.exists():
         if not target.is_file() or target.is_symlink():
             raise RuntimeError(f"artifact target is not a regular file: {target}")
@@ -22,7 +67,9 @@ def apply_artifact(spec: dict[str, Any], data: bytes, preconditions: dict[str, s
     atomic_write(target, data, int(spec.get("mode", 0o444)))
 
 
-def post_state(manifest: dict[str, Any]) -> dict[str, Any]:
+def post_state(manifest: dict[str, Any], admin_user: str) -> dict[str, Any]:
+    for spec in manifest.get("directories", []):
+        verify_directory(spec, admin_user)
     expected = manifest.get("expected_post_state") or {}
     artifacts = expected.get("artifacts") or {}
     observed: dict[str, str] = {}
