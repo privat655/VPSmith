@@ -90,6 +90,7 @@ func TestCoreRestoreRequiresVerifiedStagingOnRealSSHSystemdTarget(t *testing.T) 
 		SubjectIdentity: "core-restore-test",
 		PackageSHA256:   strings.Repeat("a", 64),
 		Version:         "1.0.0",
+		Directories:     []executionbundle.Directory{{Path: "/var/tmp/vpsmith-core-restore-guard", Owner: executionbundle.PrincipalRoot, Group: executionbundle.PrincipalRoot, Mode: 0o755}},
 		Files:           []executionbundle.File{{Path: "generated/managed.txt", TargetPath: managedPath, Mode: 0o644, Data: managedData}},
 		Actions:         []executionbundle.File{{Path: "actions/restore.sh", Mode: 0o500, Data: []byte("#!/bin/sh\nset -eu\nexit 0\n")}},
 		ActionIDs:       []string{"core-restore"},
