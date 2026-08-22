@@ -5,13 +5,24 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestPrepareCoreRuntimeUsesStablePodmanObservationContract(t *testing.T) {
 	compiler := coreCompiler(t)
-	prepared, err := compiler.PrepareCore(context.Background(), coreRequest(Install))
+	runtimeSource, err := os.ReadFile("../../embedded/core/actions/runtime.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := coreRequest(Install)
+	source := coreFS()
+	source["actions/runtime.sh"] = &fstest.MapFile{Data: runtimeSource, Mode: 0o755}
+	req.Source.PackageFS = source
+
+	prepared, err := compiler.PrepareCore(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
