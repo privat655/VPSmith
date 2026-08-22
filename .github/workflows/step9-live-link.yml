@@ -1,0 +1,54 @@
+name: step 9 live run link
+
+on:
+  push:
+    branches:
+      - agent/step9-core-lifecycle
+    paths:
+      - '.github/workflows/step9-live.yml'
+      - 'cmd/vpsmith-step9-live/**'
+      - 'internal/**'
+      - 'embedded/**'
+      - 'tests/execution_sandbox/**'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  actions: read
+  statuses: write
+
+jobs:
+  link-live-run:
+    name: link canonical fresh-Ubuntu run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Publish canonical live run link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          for attempt in $(seq 1 60); do
+            run_url="$({
+              gh api \
+                --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/step9-live.yml/runs" \
+                -f branch="${GITHUB_REF_NAME}" \
+                -f event=push \
+                -f per_page=20
+            } | jq -r --arg sha "${GITHUB_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .html_url' | head -n 1)"
+            if [ -n "$run_url" ]; then
+              gh api \
+                --method POST \
+                "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+                -f state=success \
+                -f context=step9-live-link \
+                -f description='Canonical Fresh-Ubuntu run linked' \
+                -f target_url="$run_url" \
+                >/dev/null
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'canonical Step-9 live run was not discoverable for this commit' >&2
+          exit 1
