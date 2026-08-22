@@ -8,6 +8,11 @@ on:
     paths:
       - '.github/workflows/step9-live.yml'
       - 'cmd/vpsmith-step9-live/**'
+      - 'internal/**'
+      - 'embedded/**'
+      - 'tests/execution_sandbox/**'
+      - 'go.mod'
+      - 'go.sum'
 
 permissions:
   contents: read
@@ -103,6 +108,8 @@ jobs:
             echo 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 update >/dev/null'
             echo 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install --no-install-recommends -y qemu-guest-agent >/dev/null'
             echo 'systemctl enable --now qemu-guest-agent.service >/dev/null'
+            echo 'install -d -o root -g vpsmith -m 0750 /var/lib/vpsmith/core /var/lib/vpsmith/core/caddy'
+            echo 'install -d -o vpsmith -g vpsmith -m 0750 /var/lib/vpsmith/core/caddy/data'
             echo "install -d -m 0700 '${cert_dir}'"
             echo "cat >'${cert_dir}/${STEP9_AUTH_DOMAIN}.crt' <<'CERT'"
             cat live/tls/auth-chain.crt
