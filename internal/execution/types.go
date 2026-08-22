@@ -25,6 +25,7 @@ type Run struct {
 	BundleSHA256 string `json:"bundle_sha256"`
 	Kind         string `json:"kind,omitempty"`
 	Version      string `json:"version,omitempty"`
+	BackupRef    string `json:"backup_ref,omitempty"`
 	Status       Status `json:"status"`
 	Phase        string `json:"phase,omitempty"`
 }

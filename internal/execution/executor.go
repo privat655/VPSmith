@@ -42,15 +42,32 @@ func New(target Target, secrets Secrets, history History, opts Options) (*Execut
 }
 
 func (e *Executor) Execute(ctx context.Context, targetID string, bundle executionbundle.Bundle) (Run, error) {
+	return e.execute(ctx, targetID, bundle, false)
+}
+
+// ExecuteVerifiedCoreRestore is intentionally narrow. Callers may use it only
+// after independently verifying and staging the approved Core restore payload.
+// The generic Execute entry point refuses the same bundle before upload/start.
+func (e *Executor) ExecuteVerifiedCoreRestore(ctx context.Context, targetID string, bundle executionbundle.Bundle) (Run, error) {
+	return e.execute(ctx, targetID, bundle, true)
+}
+
+func (e *Executor) execute(ctx context.Context, targetID string, bundle executionbundle.Bundle, verifiedCoreRestore bool) (Run, error) {
 	manifest, err := validateBundle(targetID, bundle)
 	if err != nil {
 		return Run{}, err
+	}
+	if isCoreRestore(manifest) && !verifiedCoreRestore {
+		return Run{}, errors.New("Core restore execution requires ExecuteVerifiedCoreRestore after verified payload staging")
+	}
+	if verifiedCoreRestore && !isCoreRestore(manifest) {
+		return Run{}, errors.New("verified Core restore execution requires a Core restore bundle")
 	}
 	runID, err := e.newID()
 	if err != nil {
 		return Run{}, fmt.Errorf("allocate execution run id: %w", err)
 	}
-	run := Run{ID: runID, TargetID: targetID, BundleID: bundle.ID, BundleSHA256: bundle.SHA256, Kind: string(manifest.Kind), Version: manifest.Version, Status: StatusNotStarted}
+	run := Run{ID: runID, TargetID: targetID, BundleID: bundle.ID, BundleSHA256: bundle.SHA256, Kind: string(manifest.Kind), Version: manifest.Version, BackupRef: manifest.BackupRef, Status: StatusNotStarted}
 	if err := e.target.Upload(ctx, targetID, bundle); err != nil {
 		return run, fmt.Errorf("upload execution bundle: %w", err)
 	}
@@ -115,6 +132,18 @@ func (e *Executor) Execute(ctx context.Context, targetID string, bundle executio
 		case <-time.After(e.poll):
 		}
 	}
+}
+
+func isCoreRestore(manifest executionbundle.Manifest) bool {
+	if manifest.SubjectKind != "core" || manifest.SubjectID != "core" {
+		return false
+	}
+	for _, action := range manifest.Actions {
+		if action.ID == "core-restore" {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Executor) Reconcile(ctx context.Context, targetID, runID, bundleID, bundleSHA256 string) (Run, error) {

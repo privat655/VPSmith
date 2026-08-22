@@ -1,0 +1,12 @@
+{
+  "core_version": "0.1.0",
+  "core_contract": "1",
+  "images": {
+    "caddy": {
+      "ref": "docker.io/library/caddy:2.11.4-alpine"
+    },
+    "authelia": {
+      "ref": "docker.io/authelia/authelia:4.39.20"
+    }
+  }
+}

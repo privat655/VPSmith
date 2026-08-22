@@ -99,6 +99,15 @@ func (t *sshTransport) Inspect(ctx context.Context, sess session) (managementsta
 		}
 		host.PrimaryHardening = hardening
 	}
+	if strings.EqualFold(host.OSID, "ubuntu") && host.OSVersion == "24.04" {
+		secondary, swaps, listeners, err := t.step9HostFacts(ctx, sess)
+		if err != nil {
+			return result, err
+		}
+		host.SecondaryHardening = secondary
+		host.SwapDevices = swaps
+		host.Listeners = listeners
+	}
 	result.Host = host
 	result.CloudInit = cloudInit
 	core, err := t.coreFacts(ctx, sess)
@@ -106,6 +115,11 @@ func (t *sshTransport) Inspect(ctx context.Context, sess session) (managementsta
 		return result, err
 	}
 	result.Core = core
+	if strings.EqualFold(host.OSID, "ubuntu") && host.OSVersion == "24.04" && core.Present {
+		if err := t.enrichStep9Runtime(ctx, sess, &result); err != nil {
+			return result, err
+		}
+	}
 	modules, err := t.moduleFacts(ctx, sess)
 	if err != nil {
 		return result, err

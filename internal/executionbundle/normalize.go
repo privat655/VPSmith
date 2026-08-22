@@ -23,6 +23,25 @@ func validateInput(in Input) error {
 	if len(in.ActionWritablePaths) > 0 && in.SubjectKind != "module" {
 		return errors.New("action writable paths are only valid for module bundles")
 	}
+	seenDirectories := map[string]struct{}{}
+	for _, directory := range in.Directories {
+		if directory.Path == "" || !strings.HasPrefix(directory.Path, "/") || path.Clean(directory.Path) != directory.Path || strings.ContainsAny(directory.Path, "\r\n\x00\t ") {
+			return fmt.Errorf("invalid target directory path %q", directory.Path)
+		}
+		if directory.Owner != PrincipalRoot && directory.Owner != PrincipalAdmin {
+			return fmt.Errorf("invalid target directory owner for %s", directory.Path)
+		}
+		if directory.Group != PrincipalRoot && directory.Group != PrincipalAdmin {
+			return fmt.Errorf("invalid target directory group for %s", directory.Path)
+		}
+		if directory.Mode == 0 || directory.Mode&^0o755 != 0 || directory.Mode&0o022 != 0 || directory.Mode&0o100 == 0 {
+			return fmt.Errorf("unsafe target directory mode for %s", directory.Path)
+		}
+		if _, exists := seenDirectories[directory.Path]; exists {
+			return fmt.Errorf("duplicate target directory %s", directory.Path)
+		}
+		seenDirectories[directory.Path] = struct{}{}
+	}
 	seenWritable := map[string]struct{}{}
 	for _, value := range in.ActionWritablePaths {
 		if value == "" || !strings.HasPrefix(value, "/") || path.Clean(value) != value || strings.ContainsAny(value, "\r\n\x00\t ") {
@@ -47,6 +66,9 @@ func validateInput(in Input) error {
 		}
 	}
 	if in.Kind == Validation {
+		if len(in.Directories) > 0 {
+			return errors.New("validation bundle contains target directory mutation")
+		}
 		for _, s := range in.Steps {
 			if s.Mutating {
 				return fmt.Errorf("validation bundle contains mutating step %s", s.ID)
@@ -99,7 +121,6 @@ func normalizeFiles(in Input) ([]File, []Artifact, []Action, error) {
 		actions = append(actions, Action{ID: in.ActionIDs[i], Path: f.Path, SHA256: digest})
 	}
 	sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].Path < artifacts[j].Path })
-	// Action order is plan semantics and is deliberately preserved.
 	return files, artifacts, actions, nil
 }
 
@@ -109,6 +130,9 @@ func normalizeManifest(m *Manifest) {
 	}
 	if m.Images == nil {
 		m.Images = []ImageIdentity{}
+	}
+	if m.Directories == nil {
+		m.Directories = []Directory{}
 	}
 	if m.Artifacts == nil {
 		m.Artifacts = []Artifact{}
@@ -139,6 +163,7 @@ func normalizeManifest(m *Manifest) {
 		return m.Sources[i].Kind < m.Sources[j].Kind
 	})
 	sort.Slice(m.Images, func(i, j int) bool { return m.Images[i].Name < m.Images[j].Name })
+	sort.Slice(m.Directories, func(i, j int) bool { return m.Directories[i].Path < m.Directories[j].Path })
 	sort.Slice(m.Artifacts, func(i, j int) bool { return m.Artifacts[i].Path < m.Artifacts[j].Path })
 	sort.Strings(m.ActionWritablePaths)
 	sort.Slice(m.Secrets, func(i, j int) bool {

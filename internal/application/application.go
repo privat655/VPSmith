@@ -10,6 +10,7 @@ import (
 
 	"github.com/privat655/VPSmith/internal/backuprestore"
 	"github.com/privat655/VPSmith/internal/bootstrap"
+	"github.com/privat655/VPSmith/internal/corelifecycle"
 	"github.com/privat655/VPSmith/internal/deployment"
 	"github.com/privat655/VPSmith/internal/execution"
 	"github.com/privat655/VPSmith/internal/executionbundle"
@@ -45,6 +46,7 @@ type Application struct {
 	bundles   *executionbundle.Assembler
 	backups   *backuprestore.Manager
 	recovery  *recoverypackage.Service
+	core      *corelifecycle.Lifecycle
 }
 
 func Open(ctx context.Context, paths Paths) (*Application, error) {
@@ -113,7 +115,26 @@ func Open(ctx context.Context, paths Paths) (*Application, error) {
 	if err != nil {
 		return fail(fmt.Errorf("open recovery-package consumer: %w", err))
 	}
-	return &Application{state: state, sources: sources, gateway: gateway, compiler: compiler, bootstrap: bootstrapCoordinator, executor: executor, bundles: bundles, backups: backups, recovery: recovery}, nil
+	storage, err := targetgateway.NewStorageBackupTarget(gateway)
+	if err != nil {
+		return fail(fmt.Errorf("open target storage backup adapter: %w", err))
+	}
+	core, err := corelifecycle.New(state, sources, gateway, compiler, executor, backups, storage)
+	if err != nil {
+		return fail(fmt.Errorf("open Core lifecycle: %w", err))
+	}
+	return &Application{
+		state:     state,
+		sources:   sources,
+		gateway:   gateway,
+		compiler:  compiler,
+		bootstrap: bootstrapCoordinator,
+		executor:  executor,
+		bundles:   bundles,
+		backups:   backups,
+		recovery:  recovery,
+		core:      core,
+	}, nil
 }
 
 func normalizePaths(paths *Paths) error {
@@ -124,8 +145,12 @@ func normalizePaths(paths *Paths) error {
 		paths.BundlesDir = filepath.Join(paths.StateDir, "execution-bundles")
 	}
 	for name, value := range map[string]string{
-		"state": paths.StateDir, "sources": paths.SourcesDir, "backups": paths.BackupsDir,
-		"embedded": paths.EmbeddedRoot, "ssh runtime": paths.SSHRuntimeDir, "bundles": paths.BundlesDir,
+		"state":       paths.StateDir,
+		"sources":     paths.SourcesDir,
+		"backups":     paths.BackupsDir,
+		"embedded":    paths.EmbeddedRoot,
+		"ssh runtime": paths.SSHRuntimeDir,
+		"bundles":     paths.BundlesDir,
 	} {
 		if value == "" || !filepath.IsAbs(value) {
 			return fmt.Errorf("absolute %s path is required", name)
@@ -165,22 +190,14 @@ func (a *Application) Execute(ctx context.Context, targetID string, bundle execu
 	return a.executor.Execute(ctx, targetID, bundle)
 }
 
-// CreateRecoveryPackage is the production recovery-export operation. It uses
-// the same canonical modules already composed for Studio; no filesystem/DB
-// exporter exists beside this path.
 func (a *Application) CreateRecoveryPackage(ctx context.Context, req recoverypackage.CreateRequest) (backuprestore.Artifact, error) {
 	return a.recovery.Create(ctx, req)
 }
 
-// ImportRecoveryPackage validates/decrypts a real .tar.zst.age package and
-// atomically restores canonical management state through the same modules.
 func (a *Application) ImportRecoveryPackage(ctx context.Context, source string, passphrase []byte) (backuprestore.Artifact, error) {
 	return a.recovery.Import(ctx, source, passphrase)
 }
 
-// InspectTargetAfterRecovery proves the restored SSH identity and strict host
-// trust are consumable by the existing read-only target gateway. It performs no
-// target mutation and never re-enters TOFU.
 func (a *Application) InspectTargetAfterRecovery(ctx context.Context, id managementstate.TargetID) (managementstate.ObservedState, error) {
 	return a.gateway.Inspect(ctx, id)
 }
@@ -191,3 +208,4 @@ func (a *Application) Gateway() *targetgateway.Gateway    { return a.gateway }
 func (a *Application) Compiler() *deployment.Compiler     { return a.compiler }
 func (a *Application) Backups() *backuprestore.Manager    { return a.backups }
 func (a *Application) Recovery() *recoverypackage.Service { return a.recovery }
+func (a *Application) Core() *corelifecycle.Lifecycle     { return a.core }

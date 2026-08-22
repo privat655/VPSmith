@@ -34,6 +34,7 @@ SECRET_MAGIC = b"VPSMITH-SECRETS-1\n"
 BOOTSTRAP_ROOT = Path("/var/tmp/vpsmith-execution")
 CORE_ROOT = Path("/var/lib/vpsmith/execution")
 CORE_MARKER = CORE_ROOT / ".active"
+CORE_RESTORE_ROOT = Path("/var/lib/vpsmith/tmp/core-restore")
 INVENTORY_ROOT = Path("/var/lib/vpsmith/inventory")
 SECRET_ROOT = Path("/var/lib/vpsmith/secrets")
 

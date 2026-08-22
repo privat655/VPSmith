@@ -46,18 +46,19 @@ func (a *Adapter) RegisterBundle(ctx context.Context, run execution.Run) error {
 		if existing.ID != managementstate.ExecutionBundleID(run.BundleID) {
 			continue
 		}
-		if existing.TargetID != managementstate.TargetID(run.TargetID) || existing.SHA256 != run.BundleSHA256 || existing.Kind != run.Kind || existing.Version != run.Version {
+		if existing.TargetID != managementstate.TargetID(run.TargetID) || existing.SHA256 != run.BundleSHA256 || existing.Kind != run.Kind || existing.Version != run.Version || existing.BackupRef != managementstate.BackupArtifactID(run.BackupRef) {
 			return fmt.Errorf("execution bundle %s already exists with different immutable metadata", run.BundleID)
 		}
 		return nil
 	}
 	return a.store.Change(ctx, func(change *managementstate.Change) error {
 		return change.AppendExecutionBundle(managementstate.ExecutionBundleMetadata{
-			ID:       managementstate.ExecutionBundleID(run.BundleID),
-			TargetID: managementstate.TargetID(run.TargetID),
-			Kind:     run.Kind,
-			Version:  run.Version,
-			SHA256:   run.BundleSHA256,
+			ID:        managementstate.ExecutionBundleID(run.BundleID),
+			TargetID:  managementstate.TargetID(run.TargetID),
+			Kind:      run.Kind,
+			Version:   run.Version,
+			SHA256:    run.BundleSHA256,
+			BackupRef: managementstate.BackupArtifactID(run.BackupRef),
 		})
 	})
 }

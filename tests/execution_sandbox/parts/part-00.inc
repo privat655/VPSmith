@@ -95,6 +95,7 @@ func TestRealSSHSystemdExecutionProtocol(t *testing.T) {
 		data := []byte("core-v1\n")
 		bundle := assemble(t, assembler, executionbundle.Input{
 			Kind: executionbundle.Installation, TargetID: string(sandboxTargetID), SubjectKind: "core", SubjectID: "core", SubjectIdentity: "core-v1", Version: "1.0.0",
+			Directories:   []executionbundle.Directory{{Path: "/var/tmp/vpsmith-sandbox", Owner: executionbundle.PrincipalRoot, Group: executionbundle.PrincipalRoot, Mode: 0o755}},
 			Files:         []executionbundle.File{{Path: "artifacts/managed.txt", TargetPath: path, Mode: 0o644, Data: data}},
 			Preconditions: []executionbundle.Precondition{{Kind: "target", Subject: string(sandboxTargetID), Expected: "same-target"}},
 			ExpectedPost:  map[string]any{"artifacts": map[string]string{path: digest(data)}},

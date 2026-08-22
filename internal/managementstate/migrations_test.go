@@ -95,3 +95,37 @@ func TestMigrationRejectsNewerSchema(t *testing.T) {
 		t.Fatalf("migrate() error = %v", err)
 	}
 }
+
+func TestMigrationV4PreservesExistingBundleWithEmptyBackupReference(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:backup-ref-migration?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateWith(ctx, conn, []migration{{version: 1, up: migrateV1}, {version: 2, up: migrateV2}, {version: 3, up: migrateV3}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO execution_bundles(id,target_id,kind,version,sha256,created_at) VALUES('bundle_old','target_1','migration','1.0.0','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','2026-08-20T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateWith(ctx, conn, []migration{{version: 1, up: migrateV1}, {version: 2, up: migrateV2}, {version: 3, up: migrateV3}, {version: 4, up: migrateV4}}); err != nil {
+		t.Fatal(err)
+	}
+	var backupRef string
+	if err := conn.QueryRowContext(ctx, `SELECT backup_ref FROM execution_bundles WHERE id='bundle_old'`).Scan(&backupRef); err != nil {
+		t.Fatal(err)
+	}
+	if backupRef != "" {
+		t.Fatalf("migrated historical backup ref=%q want empty", backupRef)
+	}
+}

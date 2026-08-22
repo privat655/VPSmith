@@ -22,7 +22,9 @@
         proof["phase"] = "preconditions"
         write_proof(proof_file, proof)
         check_preconditions(manifest)
+        require_core_restore_staging(manifest)
         if not validation:
+            prepare_directories(manifest, args.admin_user)
             try:
                 claim_fd = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
             except FileExistsError:

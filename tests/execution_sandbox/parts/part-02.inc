@@ -11,10 +11,37 @@ locked, err := executor(t, target, history, "run_lock_2").Execute(ctx, string(sa
 		}
 	})
 
-	t.Run("action-failure-stops-following-step", func(t *testing.T) {
+	t.Run("action-failure-stops-following-step-and-reports-bounded-redacted-output", func(t *testing.T) {
 		path := "/var/tmp/vpsmith-sandbox/after-failure-must-not-exist"
 		data := []byte("late\n")
-		in := actionBundle("fail-action", "fail-action", "#!/bin/sh\necho action-failed >&2\nexit 7\n", []executionbundle.Step{{ID: "apply:late", Kind: "apply-artifact", Artifact: "artifacts/late.txt", Mutating: true}})
+		secretValue := []byte(fmt.Sprintf("sandbox-redaction-marker-%d", time.Now().UnixNano()))
+		var secretID managementstate.SecretID
+		if err := store.Change(ctx, func(change *managementstate.Change) error {
+			id, err := change.CreateSecret("execution sandbox action output", managementstate.SecretSystem)
+			if err != nil {
+				return err
+			}
+			if err := change.SetSecret(id, secretValue); err != nil {
+				return err
+			}
+			secretID = id
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		secretPath := "/var/lib/vpsmith/secrets/core/" + string(secretID) + ".env"
+		script := fmt.Sprintf(`#!/bin/sh
+set -eu
+printf 'useful-stdout\n'
+sudo -n cat %s
+head -c 65536 /dev/zero | tr '\000' O
+printf 'useful-stderr\n' >&2
+sudo -n cat %s >&2
+head -c 65536 /dev/zero | tr '\000' E >&2
+exit 7
+`, secretPath, secretPath)
+		in := actionBundle("fail-action", "fail-action", script, []executionbundle.Step{{ID: "apply:late", Kind: "apply-artifact", Artifact: "artifacts/late.txt", Mutating: true}})
+		in.Secrets = []executionbundle.SecretReference{{SecretID: string(secretID), Container: "core/action", Delivery: "environment", Target: "SANDBOX_MARKER"}}
 		in.Files = []executionbundle.File{{Path: "artifacts/late.txt", TargetPath: path, Mode: 0o644, Data: data}}
 		in.ExpectedPost = map[string]any{"artifacts": map[string]string{path: digest(data)}}
 		bundle := assemble(t, assembler, in)
@@ -22,15 +49,54 @@ locked, err := executor(t, target, history, "run_lock_2").Execute(ctx, string(sa
 		if err == nil || r.Status != execution.StatusFailed {
 			t.Fatalf("failure run status=%s err=%v", r.Status, err)
 		}
-		obs, err := target.Observe(ctx, string(sandboxTargetID), "run_failure")
-		if err != nil || obs.Proof == nil || len(obs.Proof.Steps) == 0 {
-			t.Fatalf("failure proof=%#v err=%v", obs.Proof, err)
+		if !strings.Contains(err.Error(), "useful-stdout") || !strings.Contains(err.Error(), "useful-stderr") {
+			t.Fatalf("failure error lost action output: %v", err)
 		}
-		if obs.Proof.Steps[0].ExitCode != 7 || !strings.Contains(obs.Proof.Steps[0].Stderr, "action-failed") {
-			t.Fatalf("failure step=%#v", obs.Proof.Steps[0])
+		if strings.Contains(err.Error(), string(secretValue)) {
+			t.Fatal("failure error leaked action secret")
+		}
+		obs, observeErr := target.Observe(ctx, string(sandboxTargetID), "run_failure")
+		if observeErr != nil || obs.Proof == nil || len(obs.Proof.Steps) == 0 {
+			t.Fatalf("failure proof=%#v err=%v", obs.Proof, observeErr)
+		}
+		step := obs.Proof.Steps[0]
+		if step.ExitCode != 7 || !strings.Contains(step.Stdout, "useful-stdout") || !strings.Contains(step.Stderr, "useful-stderr") {
+			t.Fatalf("failure step=%#v", step)
+		}
+		for name, output := range map[string]string{"stdout": step.Stdout, "stderr": step.Stderr, "proof error": obs.Proof.Error} {
+			if strings.Contains(output, string(secretValue)) {
+				t.Fatalf("%s leaked action secret", name)
+			}
+			if !strings.Contains(output, "[REDACTED]") {
+				t.Fatalf("%s did not preserve redaction evidence: %q", name, output)
+			}
+		}
+		const maxCapture = 16 * 1024
+		maxBounded := maxCapture + len("\n[TRUNCATED]")
+		if len(step.Stdout) > maxBounded || len(step.Stderr) > maxBounded || len(obs.Proof.Error) > maxBounded {
+			t.Fatalf("failure output is not bounded: stdout=%d stderr=%d error=%d", len(step.Stdout), len(step.Stderr), len(obs.Proof.Error))
+		}
+		if !strings.Contains(step.Stdout, "[TRUNCATED]") || !strings.Contains(step.Stderr, "[TRUNCATED]") {
+			t.Fatalf("large action output was not deterministically truncated: stdout=%d stderr=%d", len(step.Stdout), len(step.Stderr))
 		}
 		if dockerExists(t, cid, path) {
 			t.Fatal("step after action failure executed")
+		}
+	})
+
+	t.Run("successful-action-output-and-status-are-unchanged", func(t *testing.T) {
+		bundle := assemble(t, assembler, actionBundle("success-action", "success-action", "#!/bin/sh\nprintf 'success-stdout\\n'\nprintf 'success-stderr\\n' >&2\n", nil))
+		r, err := executor(t, target, history, "run_success_action").Execute(ctx, string(sandboxTargetID), bundle)
+		if err != nil || r.Status != execution.StatusSuccess {
+			t.Fatalf("success action status=%s err=%v", r.Status, err)
+		}
+		obs, err := target.Observe(ctx, string(sandboxTargetID), "run_success_action")
+		if err != nil || obs.Proof == nil || len(obs.Proof.Steps) == 0 {
+			t.Fatalf("success proof=%#v err=%v", obs.Proof, err)
+		}
+		step := obs.Proof.Steps[0]
+		if step.ExitCode != 0 || step.Stdout != "success-stdout\n" || step.Stderr != "success-stderr\n" {
+			t.Fatalf("success step=%#v", step)
 		}
 	})
 

@@ -66,6 +66,14 @@ func validDigest(v string) bool {
 	return err == nil
 }
 
+func validSHA256(v string) bool {
+	if len(v) != sha256.Size*2 || v != strings.ToLower(v) {
+		return false
+	}
+	_, err := hex.DecodeString(v)
+	return err == nil
+}
+
 func subjectBundleIdentity(req Request, mods []compiledModule, detached *compiledModule) (string, string, string) {
 	for _, m := range mods {
 		if m.Desired.InstanceID == req.SubjectInstance {
