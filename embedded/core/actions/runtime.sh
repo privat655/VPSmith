@@ -325,7 +325,12 @@ apply_swap() {
   esac
 }
 
-prepare_runtime_file_ownership() {
+prepare_runtime_ownership() {
+  sudo install -d -o "$ADMIN_USER" -g "$ADMIN_GROUP" -m 0750 \
+    /var/lib/vpsmith/core/caddy/data \
+    /var/lib/vpsmith/core/caddy/config \
+    /var/lib/vpsmith/core/authelia/data
+
   local qdir="/home/${ADMIN_USER}/.config/containers/systemd"
   sudo find "$qdir" -maxdepth 1 -type f \
     \( -name '*.network' -o -name '*.container' \) \
@@ -468,7 +473,7 @@ apply_core_runtime() {
       configure_rootless_podman
       apply_secondary_hardening
       apply_swap
-      prepare_runtime_file_ownership
+      prepare_runtime_ownership
       validate_generated_runtime
       activate_runtime
       validate_runtime_local
