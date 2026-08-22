@@ -10,6 +10,13 @@ const (
 	Validation   Kind = "validation"
 )
 
+type DirectoryPrincipal string
+
+const (
+	PrincipalRoot  DirectoryPrincipal = "root"
+	PrincipalAdmin DirectoryPrincipal = "admin"
+)
+
 type SourceIdentity struct {
 	Kind          string `json:"kind"`
 	ID            string `json:"id"`
@@ -71,6 +78,7 @@ type Manifest struct {
 	Version             string            `json:"version"`
 	Sources             []SourceIdentity  `json:"sources"`
 	Images              []ImageIdentity   `json:"images"`
+	Directories         []Directory       `json:"directories"`
 	Artifacts           []Artifact        `json:"artifacts"`
 	Actions             []Action          `json:"actions"`
 	ActionWritablePaths []string          `json:"action_writable_paths,omitempty"`
@@ -81,6 +89,13 @@ type Manifest struct {
 	Steps               []Step            `json:"steps"`
 	BackupRequired      bool              `json:"backup_required"`
 	BackupRef           string            `json:"backup_ref,omitempty"`
+}
+
+type Directory struct {
+	Path  string             `json:"path"`
+	Owner DirectoryPrincipal `json:"owner"`
+	Group DirectoryPrincipal `json:"group"`
+	Mode  int64              `json:"mode"`
 }
 
 type Artifact struct {
@@ -114,6 +129,7 @@ type Input struct {
 	Version             string
 	Sources             []SourceIdentity
 	Images              []ImageIdentity
+	Directories         []Directory
 	Files               []File
 	Actions             []File
 	ActionIDs           []string
