@@ -33,10 +33,10 @@ locked, err := executor(t, target, history, "run_lock_2").Execute(ctx, string(sa
 		script := fmt.Sprintf(`#!/bin/sh
 set -eu
 printf 'useful-stdout\n'
-cat %s
+sudo -n cat %s
 head -c 65536 /dev/zero | tr '\000' O
 printf 'useful-stderr\n' >&2
-cat %s >&2
+sudo -n cat %s >&2
 head -c 65536 /dev/zero | tr '\000' E >&2
 exit 7
 `, secretPath, secretPath)
