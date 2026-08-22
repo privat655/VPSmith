@@ -67,6 +67,38 @@ func TestPrepareCoreGeneratesCompleteRuntimeFromDesiredState(t *testing.T) {
 	}
 }
 
+func TestPrepareCoreDoesNotClaimUbuntuApportConfiguration(t *testing.T) {
+	compiler := coreCompiler(t)
+	prepared, err := compiler.PrepareCore(context.Background(), coreRequest(Install))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var inventory GeneratedArtifact
+	for _, artifact := range prepared.Artifacts {
+		if artifact.TargetPath == "/etc/default/apport" {
+			t.Fatal("Core install must not claim Ubuntu-owned /etc/default/apport")
+		}
+		if artifact.TargetPath == coreGeneratedInventoryTarget {
+			inventory = artifact
+		}
+	}
+	if len(inventory.Data) == 0 {
+		t.Fatal("generated Core inventory is missing")
+	}
+	var document struct {
+		ManagedArtifacts []string `json:"managed_artifacts"`
+	}
+	if err := json.Unmarshal(inventory.Data, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range document.ManagedArtifacts {
+		if path == "/etc/default/apport" {
+			t.Fatal("Core inventory must not claim Ubuntu-owned /etc/default/apport")
+		}
+	}
+}
+
 func TestCoreDesiredKeepsZeroSwapValuesAndExactAdminConfigExplicit(t *testing.T) {
 	compiler := coreCompiler(t)
 	req := coreRequest(Install)
