@@ -30,7 +30,7 @@ func TestStep9HostFactsUsesSSHAdministratorInsteadOfSudoUser(t *testing.T) {
 	key := testHostObservation(9)
 	facts, _, _, err := transport.step9HostFacts(context.Background(), session{
 		endpoint: endpoint{Address: "203.0.113.15", SSHUser: "vpsmith"},
-		HostKey: key.PublicKey, IdentitySeed: bytes.Repeat([]byte{9}, 32),
+		HostKey:  key.PublicKey, IdentitySeed: bytes.Repeat([]byte{9}, 32),
 	})
 	if err != nil {
 		t.Fatal(err)
