@@ -120,16 +120,30 @@ ensure_one_subordinate_range() {
 
 validate_rootless_podman() {
   command -v podman >/dev/null
-  local cgroup network rootless
-  rootless=$(podman info --format '{{.Host.Security.Rootless}}')
+  command -v jq >/dev/null
+  command -v pasta >/dev/null
+
+  local cgroup configured_network info pasta_executable rootless
+  info=$(podman info --format json)
+  rootless=$(printf '%s\n' "$info" | jq -er '.host.security.rootless')
   [ "$rootless" = true ] || { echo "Podman is not rootless" >&2; return 1; }
-  cgroup=$(podman info --format '{{.Host.CgroupVersion}}')
+  cgroup=$(printf '%s\n' "$info" | jq -er '.host.cgroupVersion')
   [ "$cgroup" = v2 ] || { echo "rootless Podman requires cgroup v2" >&2; return 1; }
-  network=$(podman info --format '{{.Host.RootlessNetworkCmd}}' 2>/dev/null || true)
-  if [ -n "$network" ] && [ "$network" != pasta ]; then
-    echo "rootless Podman network command is not pasta" >&2
-    return 1
-  fi
+  pasta_executable=$(printf '%s\n' "$info" | jq -er '.host.pasta.executable // empty')
+  [ -n "$pasta_executable" ] || { echo "Podman does not report pasta support" >&2; return 1; }
+
+  sudo test -r /etc/containers/containers.conf.d/90-vpsmith-rootless.conf
+  configured_network=$(sudo awk -F= '
+    /^[[:space:]]*default_rootless_network_cmd[[:space:]]*=/ {
+      value=$2
+    }
+    END {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^"|"$/, "", value)
+      print value
+    }
+  ' /etc/containers/containers.conf.d/90-vpsmith-rootless.conf)
+  [ "$configured_network" = pasta ] || { echo "rootless Podman network command is not pasta" >&2; return 1; }
 }
 
 configure_rootless_podman() {
