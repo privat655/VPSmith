@@ -100,7 +100,8 @@ jobs:
       - name: Create CI-only vendor script
         run: |
           set -eu
-          cert_dir="/var/lib/vpsmith/core/caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${STEP9_AUTH_DOMAIN}"
+          cert_parent="/var/lib/vpsmith/core/caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
+          cert_dir="${cert_parent}/${STEP9_AUTH_DOMAIN}"
           {
             echo '#!/bin/sh'
             echo 'set -eu'
@@ -110,16 +111,20 @@ jobs:
             echo 'systemctl enable --now qemu-guest-agent.service >/dev/null'
             echo 'install -d -o root -g vpsmith -m 0750 /var/lib/vpsmith/core /var/lib/vpsmith/core/caddy'
             echo 'install -d -o vpsmith -g vpsmith -m 0750 /var/lib/vpsmith/core/caddy/data'
-            echo "install -d -m 0700 '${cert_dir}'"
-            echo "cat >'${cert_dir}/${STEP9_AUTH_DOMAIN}.crt' <<'CERT'"
+            echo 'install -d -o vpsmith -g vpsmith -m 0750 /var/lib/vpsmith/core/caddy/data/caddy'
+            echo 'install -d -o vpsmith -g vpsmith -m 0750 /var/lib/vpsmith/core/caddy/data/caddy/certificates'
+            echo "install -d -o vpsmith -g vpsmith -m 0750 '${cert_parent}'"
+            echo "install -d -o vpsmith -g vpsmith -m 0700 '${cert_dir}'"
+            echo "install -o vpsmith -g vpsmith -m 0644 /dev/stdin '${cert_dir}/${STEP9_AUTH_DOMAIN}.crt' <<'CERT'"
             cat live/tls/auth-chain.crt
             echo 'CERT'
-            echo "cat >'${cert_dir}/${STEP9_AUTH_DOMAIN}.key' <<'KEY'"
+            echo "install -o vpsmith -g vpsmith -m 0600 /dev/stdin '${cert_dir}/${STEP9_AUTH_DOMAIN}.key' <<'KEY'"
             cat live/tls/auth.key
             echo 'KEY'
-            echo "printf '%s\\n' '{}' >'${cert_dir}/${STEP9_AUTH_DOMAIN}.json'"
-            echo "chmod 0600 '${cert_dir}/${STEP9_AUTH_DOMAIN}.key'"
-            echo "chmod 0644 '${cert_dir}/${STEP9_AUTH_DOMAIN}.crt' '${cert_dir}/${STEP9_AUTH_DOMAIN}.json'"
+            echo "printf '%s\\n' '{}' | install -o vpsmith -g vpsmith -m 0644 /dev/stdin '${cert_dir}/${STEP9_AUTH_DOMAIN}.json'"
+            echo "test \"\$(stat -c '%U:%G:%a' '${cert_dir}')\" = 'vpsmith:vpsmith:700'"
+            echo "test \"\$(stat -c '%U:%G:%a' '${cert_dir}/${STEP9_AUTH_DOMAIN}.key')\" = 'vpsmith:vpsmith:600'"
+            echo "runuser -u vpsmith -- test -r '${cert_dir}/${STEP9_AUTH_DOMAIN}.key'"
             echo "cat > /usr/local/share/ca-certificates/vpsmith-step9-live.crt <<'CA'"
             cat live/tls/ca.crt
             echo 'CA'
