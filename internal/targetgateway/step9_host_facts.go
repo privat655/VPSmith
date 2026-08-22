@@ -40,12 +40,27 @@ coredump_storage=$(config_value systemd/coredump.conf Storage)
 coredump_process_max=$(config_value systemd/coredump.conf ProcessSizeMax)
 coredump_disabled=0
 [ "$coredump_storage" = none ] && [ "$coredump_process_max" = 0 ] && coredump_disabled=1 || true
-apport_disabled=0
-if [ -r /etc/default/apport ] && grep -Eq '^[[:space:]]*enabled=0([[:space:]]|$)' /etc/default/apport; then
-  if ! systemctl is-active --quiet apport.service 2>/dev/null && ! systemctl is-active --quiet apport-autoreport.service 2>/dev/null; then
-    apport_disabled=1
-  fi
-fi
+apport_disabled=1
+for unit in \
+  apport.service \
+  apport-autoreport.path \
+  apport-autoreport.service \
+  apport-autoreport.timer \
+  apport-coredump-hook@.service \
+  apport-forward.socket \
+  apport-forward@.service
+do
+  [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ] || apport_disabled=0
+done
+for unit in \
+  apport.service \
+  apport-autoreport.path \
+  apport-autoreport.service \
+  apport-autoreport.timer \
+  apport-forward.socket
+do
+  systemctl is-active --quiet "$unit" 2>/dev/null && apport_disabled=0 || true
+done
 tmp_fstype=$(findmnt -n -o FSTYPE /tmp 2>/dev/null || true)
 tmp_options=$(findmnt -n -o OPTIONS /tmp 2>/dev/null || true)
 blocked_modules=1
