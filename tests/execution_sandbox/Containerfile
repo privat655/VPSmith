@@ -1,6 +1,8 @@
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+# The real-SSH sandbox grants the administrator non-interactive sudo so action
+# regressions can cross the same root-owned delivered-secret boundary as Core.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends systemd systemd-sysv openssh-server sudo python3 util-linux coreutils ca-certificates tar zstd acl attr \
  && rm -rf /var/lib/apt/lists/* \
