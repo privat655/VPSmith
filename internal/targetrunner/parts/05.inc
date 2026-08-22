@@ -26,7 +26,21 @@
                 proof["steps"].append(result)
                 write_proof(proof_file, proof)
                 if code != 0:
-                    raise RuntimeError(f"step {step.get('id')} exited with {code}: {err}")
+                    prefix = f"step {step.get('id')} exited with {code}\nstdout:\n"
+                    separator = "\nstderr:\n"
+                    marker = b"\n[TRUNCATED]"
+                    fixed = len((prefix + separator).encode("utf-8", "replace"))
+                    stream_budget = max(0, (MAX_CAPTURE - fixed) // 2)
+                    details: list[str] = []
+                    for stream in (out, err):
+                        raw = stream.encode("utf-8", "replace")
+                        if len(raw) > stream_budget:
+                            if stream_budget <= len(marker):
+                                raw = marker[:stream_budget]
+                            else:
+                                raw = raw[: stream_budget - len(marker)] + marker
+                        details.append(raw.decode("utf-8", "replace"))
+                    raise RuntimeError(prefix + details[0] + separator + details[1])
             except Exception as exc:
                 if not result.get("finished_at"):
                     result.update(exit_code=1, stdout="", stderr="", finished_at=now())
