@@ -232,6 +232,7 @@ func (c *Compiler) PrepareCore(ctx context.Context, req CoreRequest) (PreparedCo
 		Version:         req.Source.Version,
 		Sources:         []executionbundle.SourceIdentity{sourceIdentity},
 		Images:          imageIDs,
+		Directories:     coreTargetDirectories(req.AdminUser, req.Operation),
 		Files:           files,
 		Actions:         actions,
 		ActionIDs:       actionIDs,
