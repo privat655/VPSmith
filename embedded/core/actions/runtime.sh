@@ -142,14 +142,49 @@ configure_rootless_podman() {
   validate_rootless_podman
 }
 
+disable_apport() {
+  local mask_units=(
+    apport.service
+    apport-autoreport.path
+    apport-autoreport.service
+    apport-autoreport.timer
+    apport-coredump-hook@.service
+    apport-forward.socket
+    apport-forward@.service
+  )
+  local active_units=(
+    apport.service
+    apport-autoreport.path
+    apport-autoreport.service
+    apport-autoreport.timer
+    apport-forward.socket
+  )
+  local unit
+
+  sudo systemctl stop "${active_units[@]}" >/dev/null 2>&1 || true
+  for unit in "${active_units[@]}"; do
+    if systemctl is-active --quiet "$unit" 2>/dev/null; then
+      echo "Apport unit remains active: $unit" >&2
+      return 1
+    fi
+  done
+
+  sudo systemctl mask "${mask_units[@]}"
+  for unit in "${mask_units[@]}"; do
+    if [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" != masked ]; then
+      echo "Apport unit is not masked: $unit" >&2
+      return 1
+    fi
+  done
+}
+
 apply_secondary_hardening() {
   sudo systemctl daemon-reload
   sudo systemctl enable --now apparmor.service auditd.service chrony.service
   command -v aa-enabled >/dev/null
   sudo aa-enabled
 
-  sudo systemctl mask apport.service apport-autoreport.service >/dev/null 2>&1 || true
-  sudo systemctl stop apport.service apport-autoreport.service >/dev/null 2>&1 || true
+  disable_apport
 
   sudo systemctl enable tmp.mount
   if ! mountpoint -q /tmp; then
