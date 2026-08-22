@@ -15,6 +15,8 @@ import (
 
 const step9HostFactsProbe = `set -eu
 # vpsmith_step9_host_facts
+ADMIN_USER=$1
+[ -n "$ADMIN_USER" ] || { echo "Step 9 administrator is required" >&2; exit 1; }
 bool_service() {
   if systemctl is-active --quiet "$1" 2>/dev/null; then printf '1'; else printf '0'; fi
 }
@@ -96,11 +98,11 @@ for package in containerd containerd.io; do
 done
 systemctl is-active --quiet containerd.service 2>/dev/null && containerd_absent=0 || true
 subuid=0
-awk -F: -v u="$USER" '$1 == u && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 {found=1} END {exit !found}' /etc/subuid 2>/dev/null && subuid=1 || true
+awk -F: -v u="$ADMIN_USER" '$1 == u && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 {found=1} END {exit !found}' /etc/subuid 2>/dev/null && subuid=1 || true
 subgid=0
-awk -F: -v u="$USER" '$1 == u && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 {found=1} END {exit !found}' /etc/subgid 2>/dev/null && subgid=1 || true
+awk -F: -v u="$ADMIN_USER" '$1 == u && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 {found=1} END {exit !found}' /etc/subgid 2>/dev/null && subgid=1 || true
 linger=0
-[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)" = yes ] && linger=1 || true
+[ "$(loginctl show-user "$ADMIN_USER" -p Linger --value 2>/dev/null || true)" = yes ] && linger=1 || true
 printf 'hardening\tapp_armor_enabled\t%s\n' "$app_armor"
 printf 'hardening\tauditd_active\t%s\n' "$auditd"
 printf 'hardening\tchrony_active\t%s\n' "$chrony"
@@ -126,7 +128,8 @@ done
 ss -H -ltn 2>/dev/null | awk '{printf "listener\ttcp\t%s\n", $4}'`
 
 func (t *sshTransport) step9HostFacts(ctx context.Context, sess session) (managementstate.SecondaryHardeningObservedState, []managementstate.SwapDeviceObservedState, []managementstate.ListenerObservedState, error) {
-	stdout, err := t.runRemote(ctx, sess, "sudo -n sh -eu -c "+shellQuote(step9HostFactsProbe))
+	command := "sudo -n sh -eu -c " + shellQuote(step9HostFactsProbe) + " -- " + shellQuote(sess.endpoint.SSHUser)
+	stdout, err := t.runRemote(ctx, sess, command)
 	if err != nil {
 		return managementstate.SecondaryHardeningObservedState{}, nil, nil, fmt.Errorf("read Step 9 host facts: %w", err)
 	}
