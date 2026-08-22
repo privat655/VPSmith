@@ -41,7 +41,6 @@ RuntimeMaxUse=50M
 Storage=none
 ProcessSizeMax=0
 `),
-		textArtifact("generated/apport", "/etc/default/apport", 0o644, "enabled=0\n"),
 		textArtifact("generated/tmp.mount", "/etc/systemd/system/tmp.mount", 0o644, `[Unit]
 Description=VPSmith hardened temporary directory
 Before=local-fs.target
